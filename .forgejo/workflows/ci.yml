@@ -14,9 +14,8 @@
 # duplicating runs against the Forgejo primary.
 #
 # This library carries its own vendored copy of bazelbuild/buildtools
-# (under third_party/buildtools/build/) — that's the parser this lib
-# wraps. No external runtime deps beyond go-starlark-syntaxutil
-# (used for cross-cutting AST helpers) and the standard library.
+# under third_party/buildtools/. No external runtime dependencies
+# beyond the standard library.
 #
 # The check pipeline is driven by `just check`:
 #   fmt-check + sh-fmt-check + shellcheck + vet + lint (golangci-lint)
