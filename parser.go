@@ -83,13 +83,8 @@ func (p *Parser) parse(content []byte) (*ParseResult, error) {
 		}
 	}
 
-	// Post-pass: attach each *ExtensionTagCall to the matching
-	// *UseExtension's Tags slice and drop it from the top-level
-	// Statements. Without this, `python.toolchain(...)` calls
-	// would surface as standalone statements and consumers using
-	// the Handler interface would miss them entirely (Handler has
-	// no method for ExtensionTagCall — tags belong to their
-	// extension by convention).
+	// Attach each ExtensionTagCall to its parent UseExtension.Tags
+	// and drop it from the top-level statement list.
 	file.Statements = linkExtensionTags(file.Statements)
 
 	return &ParseResult{
@@ -364,12 +359,10 @@ func (p *Parser) parseUseRepo(call *build.CallExpr, pos Span) *UseRepo {
 		arg := call.List[i]
 		switch a := arg.(type) {
 		case *build.StringExpr:
-			// `use_repo(ext, "repo_a", "repo_b")` — positional names.
+			// use_repo(ext, "repo_a", "repo_b") — positional names.
 			repo.Repos = append(repo.Repos, a.Value)
 		case *build.AssignExpr:
-			// `use_repo(ext, my_alias = "remote_repo")` — kwarg
-			// rename. LHS is the local alias the importing module
-			// uses; RHS is the upstream repo name.
+			// use_repo(ext, my_alias = "remote_repo") — rename kwarg.
 			lhs, lhsOK := a.LHS.(*build.Ident)
 			rhs, rhsOK := a.RHS.(*build.StringExpr)
 			if !lhsOK || !rhsOK {
@@ -658,16 +651,11 @@ func (p *Parser) parseRequiredModuleName(call *build.CallExpr, pos Span, funcNam
 	return m, true
 }
 
-// linkExtensionTags consumes ExtensionTagCall statements and attaches
-// each as an ExtensionTag on the corresponding UseExtension found by
-// matching Variable name. Returns the statement slice with the
-// consumed ExtensionTagCalls removed. Orphan tag calls (no matching
-// use_extension) stay in place — consumers can inspect them via
-// direct iteration if they care.
+// linkExtensionTags attaches each ExtensionTagCall to the
+// UseExtension whose Variable matches and returns the statement
+// slice with the consumed calls removed. Orphan calls (no matching
+// use_extension) stay in place.
 func linkExtensionTags(stmts []Statement) []Statement {
-	// Index UseExtensions by Variable for O(1) lookup. Multiple
-	// use_extensions with the same Variable would be unusual; we
-	// link to the FIRST occurrence.
 	extByVar := map[string]*UseExtension{}
 	for _, s := range stmts {
 		if ue, ok := s.(*UseExtension); ok {
@@ -685,8 +673,6 @@ func linkExtensionTags(stmts []Statement) []Statement {
 		}
 		ue, ok := extByVar[tc.Extension]
 		if !ok {
-			// Orphan tag call; keep it in the statement list so
-			// consumers walking statements directly can see it.
 			out = append(out, s)
 			continue
 		}

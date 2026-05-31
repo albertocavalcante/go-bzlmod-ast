@@ -1,30 +1,3 @@
-// Package label provides types for Bazel module labels and versions.
-//
-// # Version Format
-//
-// Bazel module versions follow a format similar to SemVer but with Bazel-specific
-// extensions. The format is: RELEASE[-PRERELEASE][+BUILD]
-//
-// Where RELEASE is a dot-separated sequence of identifiers (e.g., "1.2.3" or "1.2.3.bcr.1"),
-// PRERELEASE is an optional hyphen-prefixed identifier sequence, and BUILD is optional
-// build metadata (ignored for comparison purposes).
-//
-// # Version Comparison
-//
-// Version comparison follows Bazel's reference implementation:
-//
-//  1. Empty versions compare as HIGHEST (used for NonRegistryOverride)
-//  2. Release segments are compared lexicographically using identifier comparison
-//  3. Prerelease versions are lower than release versions (same release prefix)
-//  4. Prerelease segments are compared lexicographically using identifier comparison
-//
-// Identifier comparison (per segment):
-//
-//  1. Numeric identifiers sort before non-numeric identifiers
-//  2. Numeric identifiers are compared as unsigned integers
-//  3. Non-numeric identifiers are compared lexicographically as strings
-//
-// Reference: https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Version.java
 package label
 
 import (

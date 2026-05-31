@@ -49,13 +49,11 @@ This project vendors the parser to achieve **zero external runtime dependencies*
 
 ## Updating the Vendored Code
 
-To update to a newer version of the parser:
+The `tools/vendor-parser` CLI handles refreshes against an upstream
+ref:
 
 ```bash
 # Update to a specific git tag
-just vendor-parser v8.0.0
-
-# Or use the tool directly
 go run ./tools/vendor-parser -tag v8.0.0
 
 # Update to a specific commit
@@ -67,20 +65,20 @@ go run ./tools/vendor-parser -version v0.0.0-20250602201422-abc123def
 
 After updating:
 
-1. Run `go build ./...` to verify compilation
-2. Run `go test ./...` to ensure tests pass
-3. Review the changes with `git diff`
-4. Commit the updated vendored code
+1. Run `go build ./...` to verify compilation.
+2. Run `go test ./...` to ensure tests pass.
+3. Review the changes with `git diff`.
+4. Commit the updated vendored code.
 
 ## Import Path
 
 Code in this project imports the vendored parser as:
 
 ```go
-import "github.com/albertocavalcante/go-bzlmod/third_party/buildtools/build"
+import "github.com/albertocavalcante/go-bzlmod-ast/third_party/buildtools/build"
 ```
 
-The vendor tool automatically rewrites internal imports within the vendored code.
+The vendor tool rewrites internal imports within the vendored code.
 
 ## Version File
 
@@ -94,5 +92,3 @@ The `VERSION` file contains JSON metadata about the vendored version:
   "packages": ["build", "labels", "tables"]
 }
 ```
-
-Use `just vendor-version` to view this information.

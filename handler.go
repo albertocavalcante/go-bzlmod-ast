@@ -8,30 +8,26 @@ import (
 // Implement this interface to customize how MODULE.bazel content is handled.
 // Each method returns an error to stop processing, or nil to continue.
 type Handler interface {
-	// Module is called for the module() declaration.
-	// `bazelCompatibility` is the verbatim `bazel_compatibility =
-	// [...]` list (empty when omitted) — version constraints the
-	// module declares on the Bazel binary, surfaced for consumers
-	// to validate without re-parsing.
+	// Module is called for the module() declaration. bazelCompatibility
+	// is the verbatim `bazel_compatibility = [...]` constraint list
+	// (empty when omitted).
 	Module(name label.Module, version label.Version, compatibilityLevel int, repoName label.ApparentRepo, bazelCompatibility []string) error
 
 	// BazelDep is called for each bazel_dep() declaration.
 	BazelDep(name label.Module, version label.Version, maxCompatibilityLevel int, repoName label.ApparentRepo, devDependency bool) error
 
 	// UseExtension is called for use_extension() declarations.
-	// `variable` is the LHS identifier ("python" in `python =
-	// use_extension(...)`); empty when the call is at top level
-	// without an assignment. `tags` holds every `<variable>.<tag>(...)`
-	// call made on this extension proxy in source order — consumers
-	// project the tag attributes (map[string]any) into their own
-	// typed shape via a type switch.
+	// variable is the LHS identifier (e.g. "python" in `python =
+	// use_extension(...)`), empty when the call has no assignment.
+	// tags holds every `<variable>.<tag>(...)` invocation in source
+	// order; the attribute map carries per-tag kwargs as map[string]any.
 	UseExtension(variable string, extensionFile label.ApparentLabel, extensionName label.StarlarkIdentifier, devDependency, isolate bool, tags []ExtensionTag) error
 
-	// UseRepo is called for use_repo() declarations. `extensionVariable`
-	// is the LHS identifier of the use_extension whose proxy this
-	// call references (empty when the call doesn't link to one).
-	// `repos` are positional imports; `renames` are the
-	// `<alias> = "<remote>"` kwarg form. Either can be empty.
+	// UseRepo is called for use_repo() declarations. extensionVariable
+	// is the LHS identifier of the use_extension that this call
+	// references (empty when no such link is recoverable from the AST).
+	// repos are positional imports; renames carries the
+	// `<alias> = "<remote>"` kwarg form.
 	UseRepo(extensionVariable string, repos []string, renames map[string]string, devDependency bool) error
 
 	// SingleVersionOverride is called for single_version_override().
@@ -56,11 +52,10 @@ type Handler interface {
 	RegisterExecutionPlatforms(patterns []string, devDependency bool) error
 
 	// Include is called for include() statements (Bazel 7.2+).
-	// `labelStr` is the target label of the included MODULE.bazel
-	// fragment; emitted verbatim. Only root modules and modules
-	// with non-registry overrides can use include(), but this
-	// Handler emits the call regardless — consumers can reject
-	// or accept.
+	// labelStr is the target label of the included MODULE.bazel
+	// fragment, emitted verbatim. Bazel only honors include() in root
+	// modules and modules with non-registry overrides, but the
+	// Handler dispatches every call; consumers decide what to do.
 	Include(labelStr string, pos Span) error
 
 	// UnknownStatement is called for unrecognized function calls.

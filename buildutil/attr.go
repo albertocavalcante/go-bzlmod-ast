@@ -1,8 +1,5 @@
 // Package buildutil provides utilities for extracting attributes from
-// buildtools AST nodes.
-//
-// This package consolidates attribute extraction logic used by both the
-// legacy parser (package gobzlmod) and the new AST parser (package ast).
+// buildtools AST nodes (the parser used for MODULE.bazel files).
 package buildutil
 
 import (

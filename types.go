@@ -16,12 +16,12 @@ type Position struct {
 	Column   int
 }
 
-// Span is a half-open source range — [Start, End). Both ends carry
-// Filename, Line, and Column so downstream tooling can render
-// underlines, fold ranges, and link back to the file.
+// Span is a half-open source range [Start, End). Both ends carry
+// Filename, Line, and Column, suitable for rendering underlines,
+// fold ranges, or links back to the source.
 //
-// Statements expose their Span via the [Statement] interface — read
-// `.Pos.Start` for the start position, `.Pos.End` for the end.
+// Statements expose their Span via the [Statement] interface; the
+// same span is reachable as the typed struct's Pos field.
 type Span struct {
 	Start Position
 	End   Position

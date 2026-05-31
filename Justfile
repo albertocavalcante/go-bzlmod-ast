@@ -50,9 +50,8 @@ install-tools: install-just install-shellcheck
 # Format / vet / lint
 # ============================================================================
 
-# Format every assay-owned file (writes in place). vendor/ is
-# upstream code — left alone so the next vendor refresh doesn't
-# re-diff the world.
+# Format every Go file under this module (writes in place). vendor/
+# and third_party/ are upstream code and left alone.
 fmt:
     #!/usr/bin/env bash
     set -euo pipefail

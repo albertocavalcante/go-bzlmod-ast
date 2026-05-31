@@ -17,15 +17,14 @@ see [`tools.go.mod`](../tools.go.mod) at repo root — pinned via
 
 ## Threat model
 
-assay's CI runs on Forgejo VPS Alberto owns. No secrets, no deploy
-targets, no released binaries (library only). The realistic harms
-from a CI compromise:
+CI for this library is library-only: no secrets, no deploy targets,
+no released binaries. Realistic harms from a CI compromise:
 
 - **Source exfiltration** — low (source is already public).
-- **Tagged release poisoning** — medium (canopy consumes assay via
-  vendor refresh; a poisoned `v0.2.0` would propagate).
+- **Tagged release poisoning** — medium (downstream consumers
+  refresh against tags; a poisoned tag would propagate).
 - **CI runner persistence** — medium (a compromised binary stays
-  resident across runs until Alberto rebuilds the runner).
+  resident across runs until the runner is rebuilt).
 
 The bar is "make supply-chain shifts visible at code-review time,"
 not "defend against nation-states." Concretely, that means:
@@ -97,10 +96,3 @@ version we want:
   publish advisories so we rely on its release-notes for security
   context.
 
-## See also
-
-- [`docs/epistemic-status.md`](../docs/epistemic-status.md) for the
-  determinism/heuristic contract on assay's *outputs* (this README
-  covers the toolchain feeding assay's *builds*).
-- The [registry-surface plan](../docs/registry-surface-plan.md)
-  §5.1 for the cross-cutting release-coordination policy.
