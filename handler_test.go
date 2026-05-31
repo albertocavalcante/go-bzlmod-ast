@@ -686,6 +686,44 @@ func (h *useRepoLinkRecorder) UseRepo(extensionVariable string, repos []string, 
 	return nil
 }
 
+// includeRecorder captures Include callbacks for the 0B-rev4 contract
+// test below.
+type includeRecorder struct {
+	BaseHandler
+	labels []string
+}
+
+func (h *includeRecorder) Include(labelStr string, _ Span) error {
+	h.labels = append(h.labels, labelStr)
+	return nil
+}
+
+// TestWalk_IncludeStatement pins the contract added in 0B-rev4:
+// include() statements flow through Handler.Include rather than
+// being silently dropped by Walk. Pre-rev, walkStatement had no
+// case for *Include — consumers couldn't see them at all.
+func TestWalk_IncludeStatement(t *testing.T) {
+	rec := &includeRecorder{}
+	file := &ModuleFile{
+		Statements: []Statement{
+			&Include{Label: "//fragments:auth.MODULE.bazel"},
+			&Include{Label: "//fragments:metrics.MODULE.bazel"},
+		},
+	}
+	if err := Walk(file, rec); err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+	if len(rec.labels) != 2 {
+		t.Fatalf("Include fired %d times, want 2", len(rec.labels))
+	}
+	if rec.labels[0] != "//fragments:auth.MODULE.bazel" {
+		t.Errorf("Include[0] = %q", rec.labels[0])
+	}
+	if rec.labels[1] != "//fragments:metrics.MODULE.bazel" {
+		t.Errorf("Include[1] = %q", rec.labels[1])
+	}
+}
+
 // TestParse_UseRepoRenamesAndExtensionLink pins the two pieces of
 // information added in 0B-rev3:
 //

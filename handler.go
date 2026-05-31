@@ -51,6 +51,14 @@ type Handler interface {
 	// RegisterExecutionPlatforms is called for register_execution_platforms().
 	RegisterExecutionPlatforms(patterns []string, devDependency bool) error
 
+	// Include is called for include() statements (Bazel 7.2+).
+	// `labelStr` is the target label of the included MODULE.bazel
+	// fragment; emitted verbatim. Only root modules and modules
+	// with non-registry overrides can use include(), but this
+	// Handler emits the call regardless — consumers can reject
+	// or accept.
+	Include(labelStr string, pos Span) error
+
 	// UnknownStatement is called for unrecognized function calls.
 	UnknownStatement(name string, pos Span) error
 }
@@ -100,6 +108,9 @@ func walkStatement(stmt Statement, handler Handler) error {
 	case *RegisterExecutionPlatforms:
 		return handler.RegisterExecutionPlatforms(s.Patterns, s.DevDependency)
 
+	case *Include:
+		return handler.Include(s.Label, s.Pos)
+
 	case *UnknownStatement:
 		return handler.UnknownStatement(s.FuncName, s.Pos)
 	}
@@ -146,6 +157,7 @@ func (h *BaseHandler) ArchiveOverride(label.Module, []string, string, string, []
 func (h *BaseHandler) LocalPathOverride(label.Module, string) error    { return nil }
 func (h *BaseHandler) RegisterToolchains([]string, bool) error         { return nil }
 func (h *BaseHandler) RegisterExecutionPlatforms([]string, bool) error { return nil }
+func (h *BaseHandler) Include(string, Span) error                      { return nil }
 func (h *BaseHandler) UnknownStatement(string, Span) error             { return nil }
 
 // DependencyCollector is a handler that collects all bazel_dep declarations.
