@@ -107,8 +107,12 @@ type ExtensionTag struct {
 
 // UseRepo represents a use_repo() call.
 type UseRepo struct {
-	Pos       Span
-	Extension *UseExtension
+	Pos Span
+	// ExtensionVariable is the LHS identifier of the use_extension
+	// whose proxy this use_repo references (the first positional
+	// arg to use_repo). Empty when the first arg isn't a bare
+	// identifier (rare; the call would be invalid anyway).
+	ExtensionVariable string
 	// Repos are the positional repo names imported by this use_repo
 	// (the simple `use_repo(ext, "repo_a", "repo_b")` form).
 	Repos []string

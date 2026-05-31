@@ -393,7 +393,7 @@ func TestBaseHandler_AllMethodsReturnNil(t *testing.T) {
 		t.Errorf("UseExtension returned error: %v", err)
 	}
 
-	if err := h.UseRepo([]string{"repo"}, false); err != nil {
+	if err := h.UseRepo("", []string{"repo"}, nil, false); err != nil {
 		t.Errorf("UseRepo returned error: %v", err)
 	}
 
@@ -661,9 +661,68 @@ type useRepoHandler struct {
 	repos *[]string
 }
 
-func (h *useRepoHandler) UseRepo(repos []string, devDep bool) error {
+func (h *useRepoHandler) UseRepo(_ string, repos []string, _ map[string]string, _ bool) error {
 	*h.repos = append(*h.repos, repos...)
 	return nil
+}
+
+// useRepoLinkRecorder captures every UseRepo's extension link +
+// renames map, used to pin the new (post-0B-rev3) contract that the
+// Handler.UseRepo callback exposes the originating extension's
+// variable name AND the `<alias> = "<remote>"` kwarg form.
+type useRepoLinkRecorder struct {
+	BaseHandler
+	extVars []string
+	repos   [][]string
+	renames []map[string]string
+	devs    []bool
+}
+
+func (h *useRepoLinkRecorder) UseRepo(extensionVariable string, repos []string, renames map[string]string, devDep bool) error {
+	h.extVars = append(h.extVars, extensionVariable)
+	h.repos = append(h.repos, repos)
+	h.renames = append(h.renames, renames)
+	h.devs = append(h.devs, devDep)
+	return nil
+}
+
+// TestParse_UseRepoRenamesAndExtensionLink pins the two pieces of
+// information added in 0B-rev3:
+//
+//   - UseRepo.Renames map carries `<alias> = "<remote>"` kwarg
+//     entries; previously dropped at parse time
+//   - Handler.UseRepo callback receives the originating
+//     use_extension's variable name as its first argument, so
+//     downstream consumers can link without holding a parallel map
+func TestParse_UseRepoRenamesAndExtensionLink(t *testing.T) {
+	const src = `
+module(name = "x", version = "1.0.0")
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+use_repo(python, "python_3_11", py_3_12 = "python_3_12")
+`
+	result, err := ParseContent("MODULE.bazel", []byte(src))
+	if err != nil {
+		t.Fatalf("ParseContent: %v", err)
+	}
+	rec := &useRepoLinkRecorder{}
+	if werr := Walk(result.File, rec); werr != nil {
+		t.Fatalf("Walk: %v", werr)
+	}
+	if len(rec.extVars) != 1 {
+		t.Fatalf("UseRepo recorder fired %d times, want 1", len(rec.extVars))
+	}
+	if rec.extVars[0] != "python" {
+		t.Errorf("extensionVariable = %q, want %q", rec.extVars[0], "python")
+	}
+	if len(rec.repos[0]) != 1 || rec.repos[0][0] != "python_3_11" {
+		t.Errorf("positional repos = %+v, want [python_3_11]", rec.repos[0])
+	}
+	if rec.renames[0] == nil {
+		t.Fatalf("renames map nil, want py_3_12 entry")
+	}
+	if got := rec.renames[0]["py_3_12"]; got != "python_3_12" {
+		t.Errorf("renames[py_3_12] = %q, want python_3_12", got)
+	}
 }
 
 // TestDependencyCollector_WithRepoName tests collecting deps with repo_name

@@ -23,8 +23,12 @@ type Handler interface {
 	// typed shape via a type switch.
 	UseExtension(variable string, extensionFile label.ApparentLabel, extensionName label.StarlarkIdentifier, devDependency, isolate bool, tags []ExtensionTag) error
 
-	// UseRepo is called for use_repo() declarations.
-	UseRepo(repos []string, devDependency bool) error
+	// UseRepo is called for use_repo() declarations. `extensionVariable`
+	// is the LHS identifier of the use_extension whose proxy this
+	// call references (empty when the call doesn't link to one).
+	// `repos` are positional imports; `renames` are the
+	// `<alias> = "<remote>"` kwarg form. Either can be empty.
+	UseRepo(extensionVariable string, repos []string, renames map[string]string, devDependency bool) error
 
 	// SingleVersionOverride is called for single_version_override().
 	SingleVersionOverride(moduleName label.Module, version label.Version, registry string, patches []string, patchCmds []string, patchStrip int) error
@@ -73,7 +77,7 @@ func walkStatement(stmt Statement, handler Handler) error {
 		return handler.UseExtension(s.Variable, s.ExtensionFile, s.ExtensionName, s.DevDependency, s.Isolate, s.Tags)
 
 	case *UseRepo:
-		return handler.UseRepo(s.Repos, s.DevDependency)
+		return handler.UseRepo(s.ExtensionVariable, s.Repos, s.Renames, s.DevDependency)
 
 	case *SingleVersionOverride:
 		return handler.SingleVersionOverride(s.Module, s.Version, s.Registry, s.Patches, s.PatchCmds, s.PatchStrip)
@@ -126,7 +130,7 @@ func (h *BaseHandler) BazelDep(label.Module, label.Version, int, label.ApparentR
 func (h *BaseHandler) UseExtension(string, label.ApparentLabel, label.StarlarkIdentifier, bool, bool, []ExtensionTag) error {
 	return nil
 }
-func (h *BaseHandler) UseRepo([]string, bool) error { return nil }
+func (h *BaseHandler) UseRepo(string, []string, map[string]string, bool) error { return nil }
 func (h *BaseHandler) SingleVersionOverride(label.Module, label.Version, string, []string, []string, int) error {
 	return nil
 }

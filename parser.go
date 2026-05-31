@@ -339,15 +339,37 @@ func (p *Parser) parseUseExtension(call *build.CallExpr, pos Span) *UseExtension
 }
 
 func (p *Parser) parseUseRepo(call *build.CallExpr, pos Span) *UseRepo {
-	repo := &UseRepo{Pos: pos}
+	repo := &UseRepo{Pos: pos, Repos: make([]string, 0)}
 
-	// First positional arg is the extension proxy (we just capture repos for now)
-	repo.Repos = make([]string, 0)
+	// First positional arg is the extension proxy ident; capture
+	// its name so Handler.UseRepo can link this call back to the
+	// originating use_extension without holding a parallel map.
+	if len(call.List) > 0 {
+		if ident, ok := call.List[0].(*build.Ident); ok {
+			repo.ExtensionVariable = ident.Name
+		}
+	}
 
-	// Collect all string positional args after the first
+	// Walk positional repos + kwarg renames after the proxy ident.
 	for i := 1; i < len(call.List); i++ {
-		if str, ok := call.List[i].(*build.StringExpr); ok {
-			repo.Repos = append(repo.Repos, str.Value)
+		arg := call.List[i]
+		switch a := arg.(type) {
+		case *build.StringExpr:
+			// `use_repo(ext, "repo_a", "repo_b")` — positional names.
+			repo.Repos = append(repo.Repos, a.Value)
+		case *build.AssignExpr:
+			// `use_repo(ext, my_alias = "remote_repo")` — kwarg
+			// rename. LHS is the local alias the importing module
+			// uses; RHS is the upstream repo name.
+			lhs, lhsOK := a.LHS.(*build.Ident)
+			rhs, rhsOK := a.RHS.(*build.StringExpr)
+			if !lhsOK || !rhsOK {
+				continue
+			}
+			if repo.Renames == nil {
+				repo.Renames = map[string]string{}
+			}
+			repo.Renames[lhs.Name] = rhs.Value
 		}
 	}
 
