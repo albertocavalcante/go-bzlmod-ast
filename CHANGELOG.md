@@ -30,8 +30,8 @@ packages it depends on:
 - `bridge.go` — connects the buildtools AST to the typed statements
 - `label/` — typed Module / Version / ApparentRepo / ApparentLabel /
   StarlarkIdentifier
-- `internal/buildutil/` — buildtools helper shared between parse and
-  bridge
+- `buildutil/` — public buildtools-attribute extraction helpers
+  shared between this lib and go-bzlmod's resolver layer
 - `third_party/buildtools/` — vendored bazelbuild buildtools parser
   (Apache-2.0)
 
@@ -47,5 +47,5 @@ covering the three-lib carve-out
   `ast.Parse`, `ast.Walk`, etc.
 - Import paths rewritten:
   - `github.com/albertocavalcante/go-bzlmod/label` → `github.com/albertocavalcante/go-bzlmod-ast/label`
-  - `github.com/albertocavalcante/go-bzlmod/internal/buildutil` → `github.com/albertocavalcante/go-bzlmod-ast/internal/buildutil`
+  - `github.com/albertocavalcante/go-bzlmod/internal/buildutil` → `github.com/albertocavalcante/go-bzlmod-ast/buildutil` (promoted out of internal/ so go-bzlmod can import it externally)
   - `github.com/albertocavalcante/go-bzlmod/third_party/buildtools/build` → `github.com/albertocavalcante/go-bzlmod-ast/third_party/buildtools/build`

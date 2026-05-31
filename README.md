@@ -26,6 +26,10 @@ for cross-cutting AST helpers and a vendored copy of
 - **`label/`** — typed `label.Module`, `label.Version`,
   `label.ApparentRepo`, `label.ApparentLabel`,
   `label.StarlarkIdentifier`. Used in the Handler signatures
+- **`buildutil/`** — generic attribute-extraction helpers for
+  buildtools AST nodes. Public because go-bzlmod (the resolver
+  layer) also needs them. No buildtools-shape knowledge beyond
+  "extract a string / int / list kwarg by name."
 - **`third_party/buildtools/`** — vendored bazelbuild buildtools
   parser (Apache-2.0); the underlying parser this library wraps
 

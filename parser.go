@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/albertocavalcante/go-bzlmod-ast/internal/buildutil"
+	"github.com/albertocavalcante/go-bzlmod-ast/buildutil"
 	"github.com/albertocavalcante/go-bzlmod-ast/label"
 	"github.com/albertocavalcante/go-bzlmod-ast/third_party/buildtools/build"
 )
