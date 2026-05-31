@@ -38,15 +38,20 @@ func mustStarlarkIdentifier(name string) label.StarlarkIdentifier {
 // Adversarial Tests for ast/handler.go
 // =============================================================================
 
-// mockExtensionProxy is a test implementation of ExtensionProxy
-type mockExtensionProxy struct {
+// useExtRecorder records the tags passed via UseExtension. Used by
+// the rewritten "use_extension with tags" + "use_extension error"
+// tests after the ExtensionProxy indirection was removed.
+type useExtRecorder struct {
+	BaseHandler
 	tags      []string
 	returnErr error
 }
 
-func (m *mockExtensionProxy) Tag(name string, attrs map[string]any) error {
-	m.tags = append(m.tags, name)
-	return m.returnErr
+func (r *useExtRecorder) UseExtension(_ string, _ label.ApparentLabel, _ label.StarlarkIdentifier, _, _ bool, tags []ExtensionTag) error {
+	for _, tag := range tags {
+		r.tags = append(r.tags, tag.Name)
+	}
+	return r.returnErr
 }
 
 // recordingHandler records all handler calls for testing
@@ -296,16 +301,11 @@ func TestWalk_UnknownStatement(t *testing.T) {
 	}
 }
 
-// TestWalk_UseExtensionWithTags tests use_extension with tag calls
+// TestWalk_UseExtensionWithTags pins the tag projection: every tag
+// attached to a use_extension surfaces in the UseExtension callback
+// in source order. Replaces the older proxy-based variant.
 func TestWalk_UseExtensionWithTags(t *testing.T) {
-	proxy := &mockExtensionProxy{}
-
-	// Override UseExtension to return our mock proxy
-	useExtHandler := &useExtensionHandler{
-		BaseHandler: BaseHandler{},
-		proxy:       proxy,
-	}
-
+	rec := &useExtRecorder{}
 	file := &ModuleFile{
 		Statements: []Statement{
 			&UseExtension{
@@ -318,64 +318,48 @@ func TestWalk_UseExtensionWithTags(t *testing.T) {
 			},
 		},
 	}
-
-	err := Walk(file, useExtHandler)
-	if err != nil {
+	if err := Walk(file, rec); err != nil {
 		t.Errorf("Walk returned error: %v", err)
 	}
-
-	if len(proxy.tags) != 2 {
-		t.Fatalf("Expected 2 tags, got %d", len(proxy.tags))
+	if len(rec.tags) != 2 {
+		t.Fatalf("Expected 2 tags, got %d", len(rec.tags))
 	}
-
-	if proxy.tags[0] != "download" {
-		t.Errorf("Expected first tag 'download', got %q", proxy.tags[0])
+	if rec.tags[0] != "download" {
+		t.Errorf("Expected first tag 'download', got %q", rec.tags[0])
 	}
-	if proxy.tags[1] != "host" {
-		t.Errorf("Expected second tag 'host', got %q", proxy.tags[1])
+	if rec.tags[1] != "host" {
+		t.Errorf("Expected second tag 'host', got %q", rec.tags[1])
 	}
 }
 
-// useExtensionHandler is a test handler that returns a mock proxy
-type useExtensionHandler struct {
-	BaseHandler
-	proxy *mockExtensionProxy
-}
-
-func (h *useExtensionHandler) UseExtension(extFile label.ApparentLabel, extName label.StarlarkIdentifier, devDep, isolate bool) (ExtensionProxy, error) {
-	return h.proxy, nil
-}
-
-// TestWalk_UseExtensionNilProxy tests use_extension that returns nil proxy
-func TestWalk_UseExtensionNilProxy(t *testing.T) {
+// TestWalk_UseExtensionBaseHandler verifies that BaseHandler accepts
+// a UseExtension call (with tags) without erroring. Replaces the
+// older nil-proxy test that exercised the proxy-skip behavior that
+// no longer exists.
+func TestWalk_UseExtensionBaseHandler(t *testing.T) {
 	handler := &BaseHandler{}
-
 	file := &ModuleFile{
 		Statements: []Statement{
 			&UseExtension{
 				ExtensionFile: mustApparentLabel("@ext//:ext.bzl"),
 				ExtensionName: mustStarlarkIdentifier("ext"),
 				Tags: []ExtensionTag{
-					{Name: "should_be_skipped"},
+					{Name: "should_be_seen_by_base_handler_noop"},
 				},
 			},
 		},
 	}
-
-	// BaseHandler returns nil proxy, tags should be skipped
-	err := Walk(file, handler)
-	if err != nil {
+	if err := Walk(file, handler); err != nil {
 		t.Errorf("Walk returned error: %v", err)
 	}
 }
 
-// TestWalk_UseExtensionProxyError tests error from proxy.Tag
-func TestWalk_UseExtensionProxyError(t *testing.T) {
-	expectedErr := errors.New("tag error")
-	proxy := &mockExtensionProxy{returnErr: expectedErr}
-
-	handler := &useExtensionHandler{proxy: proxy}
-
+// TestWalk_UseExtensionError pins error propagation: when a handler
+// returns an error from UseExtension, Walk surfaces it verbatim.
+// Replaces the older proxy.Tag error test.
+func TestWalk_UseExtensionError(t *testing.T) {
+	expectedErr := errors.New("use_extension error")
+	rec := &useExtRecorder{returnErr: expectedErr}
 	file := &ModuleFile{
 		Statements: []Statement{
 			&UseExtension{
@@ -387,8 +371,7 @@ func TestWalk_UseExtensionProxyError(t *testing.T) {
 			},
 		},
 	}
-
-	err := Walk(file, handler)
+	err := Walk(file, rec)
 	if err != expectedErr {
 		t.Errorf("Expected error %v, got %v", expectedErr, err)
 	}
@@ -406,8 +389,8 @@ func TestBaseHandler_AllMethodsReturnNil(t *testing.T) {
 		t.Errorf("BazelDep returned error: %v", err)
 	}
 
-	if proxy, err := h.UseExtension(mustApparentLabel("@x//:x.bzl"), mustStarlarkIdentifier("x"), false, false); err != nil || proxy != nil {
-		t.Errorf("UseExtension returned (%v, %v), want (nil, nil)", proxy, err)
+	if err := h.UseExtension("x", mustApparentLabel("@x//:x.bzl"), mustStarlarkIdentifier("x"), false, false, nil); err != nil {
+		t.Errorf("UseExtension returned error: %v", err)
 	}
 
 	if err := h.UseRepo([]string{"repo"}, false); err != nil {

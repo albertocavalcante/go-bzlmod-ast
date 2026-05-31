@@ -15,7 +15,13 @@ type Handler interface {
 	BazelDep(name label.Module, version label.Version, maxCompatibilityLevel int, repoName label.ApparentRepo, devDependency bool) error
 
 	// UseExtension is called for use_extension() declarations.
-	UseExtension(extensionFile label.ApparentLabel, extensionName label.StarlarkIdentifier, devDependency, isolate bool) (ExtensionProxy, error)
+	// `variable` is the LHS identifier ("python" in `python =
+	// use_extension(...)`); empty when the call is at top level
+	// without an assignment. `tags` holds every `<variable>.<tag>(...)`
+	// call made on this extension proxy in source order — consumers
+	// project the tag attributes (map[string]any) into their own
+	// typed shape via a type switch.
+	UseExtension(variable string, extensionFile label.ApparentLabel, extensionName label.StarlarkIdentifier, devDependency, isolate bool, tags []ExtensionTag) error
 
 	// UseRepo is called for use_repo() declarations.
 	UseRepo(repos []string, devDependency bool) error
@@ -45,13 +51,6 @@ type Handler interface {
 	UnknownStatement(name string, pos Span) error
 }
 
-// ExtensionProxy represents the return value of use_extension().
-// It receives tag calls made on the extension.
-type ExtensionProxy interface {
-	// Tag is called for each tag method called on the proxy.
-	Tag(name string, attrs map[string]any) error
-}
-
 // Walk traverses a ModuleFile and calls the handler for each statement.
 func Walk(file *ModuleFile, handler Handler) error {
 	for _, stmt := range file.Statements {
@@ -71,18 +70,7 @@ func walkStatement(stmt Statement, handler Handler) error {
 		return handler.BazelDep(s.Name, s.Version, s.MaxCompatibilityLevel, s.RepoName, s.DevDependency)
 
 	case *UseExtension:
-		proxy, err := handler.UseExtension(s.ExtensionFile, s.ExtensionName, s.DevDependency, s.Isolate)
-		if err != nil {
-			return err
-		}
-		if proxy != nil {
-			for _, tag := range s.Tags {
-				if err := proxy.Tag(tag.Name, tag.Attributes); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
+		return handler.UseExtension(s.Variable, s.ExtensionFile, s.ExtensionName, s.DevDependency, s.Isolate, s.Tags)
 
 	case *UseRepo:
 		return handler.UseRepo(s.Repos, s.DevDependency)
@@ -135,8 +123,8 @@ func (h *BaseHandler) Module(label.Module, label.Version, int, label.ApparentRep
 func (h *BaseHandler) BazelDep(label.Module, label.Version, int, label.ApparentRepo, bool) error {
 	return nil
 }
-func (h *BaseHandler) UseExtension(label.ApparentLabel, label.StarlarkIdentifier, bool, bool) (ExtensionProxy, error) {
-	return nil, nil
+func (h *BaseHandler) UseExtension(string, label.ApparentLabel, label.StarlarkIdentifier, bool, bool, []ExtensionTag) error {
+	return nil
 }
 func (h *BaseHandler) UseRepo([]string, bool) error { return nil }
 func (h *BaseHandler) SingleVersionOverride(label.Module, label.Version, string, []string, []string, int) error {
