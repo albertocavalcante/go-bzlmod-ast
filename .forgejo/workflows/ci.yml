@@ -1,0 +1,61 @@
+# Primary CI for go-bzlmod-ast. Runs on the Forgejo primary at
+# git.alberto.engineer (adsc/go-bzlmod-ast).
+# Single Go job — no UI — triggered on every push to main + every
+# PR + on-demand from the Forgejo Actions UI.
+#
+# Action references use the code.forgejo.org first-party mirror
+# (`https://code.forgejo.org/actions/<name>@<v>`) so the workflow
+# works against a stock Forgejo Actions runner without requiring
+# the github→forgejo aliasing some deployments configure. The YAML
+# is otherwise identical to a GitHub Actions workflow.
+#
+# A dormant counterpart lives at .github/workflows/ci.yml — same
+# steps, workflow_dispatch only. GitHub forks can flip it on without
+# duplicating runs against the Forgejo primary.
+#
+# This library carries its own vendored copy of bazelbuild/buildtools
+# (under third_party/buildtools/build/) — that's the parser this lib
+# wraps. No external runtime deps beyond go-starlark-syntaxutil
+# (used for cross-cutting AST helpers) and the standard library.
+#
+# The check pipeline is driven by `just check`:
+#   fmt-check + sh-fmt-check + shellcheck + vet + lint (golangci-lint)
+#   + modernize-check (go fix) + test-race (gotestsum)
+# golangci-lint + gotestsum + shfmt are pinned in tools.go.mod and
+# built into bin/ by `just sync-tools`. just + shellcheck are
+# installed via committed hermetic scripts under tools/ (version +
+# sha256 pinned per platform). See tools/README.md for the threat
+# model and bump procedure.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      # SHA-pinned per tools/README.md. Trailing comment names the
+      # version the SHA corresponds to so reviewers can audit bumps.
+      - uses: https://code.forgejo.org/actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+      - uses: https://code.forgejo.org/actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff  # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: install hermetic tools (just + shellcheck)
+        run: |
+          ./tools/install-just.sh ./bin
+          ./tools/install-shellcheck.sh ./bin
+          echo "$PWD/bin" >> "$GITHUB_PATH"
+      - name: sync tools (golangci-lint + gotestsum + shfmt)
+        run: just sync-tools
+      - name: ci gate
+        run: just check

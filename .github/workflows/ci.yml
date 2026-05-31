@@ -1,0 +1,44 @@
+# DORMANT — workflow_dispatch only.
+#
+# Primary CI runs on Forgejo at git.alberto.engineer
+# (see .forgejo/workflows/ci.yml). This GitHub counterpart exists so
+# anyone forking the repo on GitHub can opt into CI manually
+# from the Actions UI without it duplicating runs against the
+# Forgejo mirror on every push/PR.
+#
+# To turn this into an always-on CI on a GitHub fork, add the same
+# triggers from .forgejo/workflows/ci.yml here (push: branches:
+# [main], pull_request:). The action references already use the
+# canonical github.com/actions/* form (Forgejo uses
+# code.forgejo.org/actions/* in its workflow) so no other changes
+# are needed.
+
+name: ci (dormant)
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      # SHA-pinned per tools/README.md. Trailing comment names the
+      # version the SHA corresponds to so reviewers can audit bumps.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff  # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: install hermetic tools (just + shellcheck)
+        run: |
+          ./tools/install-just.sh ./bin
+          ./tools/install-shellcheck.sh ./bin
+          echo "$PWD/bin" >> "$GITHUB_PATH"
+      - name: sync tools (golangci-lint + gotestsum + shfmt)
+        run: just sync-tools
+      - name: ci gate
+        run: just check
