@@ -61,7 +61,7 @@ type recordingHandler struct {
 	err   error // error to return from all methods
 }
 
-func (h *recordingHandler) Module(name label.Module, version label.Version, compatLevel int, repoName label.ApparentRepo) error {
+func (h *recordingHandler) Module(name label.Module, version label.Version, compatLevel int, repoName label.ApparentRepo, bazelCompatibility []string) error {
 	h.calls = append(h.calls, "Module:"+name.String())
 	return h.err
 }
@@ -381,7 +381,7 @@ func TestWalk_UseExtensionError(t *testing.T) {
 func TestBaseHandler_AllMethodsReturnNil(t *testing.T) {
 	h := &BaseHandler{}
 
-	if err := h.Module(label.MustModule("m"), label.MustVersion("1.0"), 0, mustApparentRepo("")); err != nil {
+	if err := h.Module(label.MustModule("m"), label.MustVersion("1.0"), 0, mustApparentRepo(""), nil); err != nil {
 		t.Errorf("Module returned error: %v", err)
 	}
 

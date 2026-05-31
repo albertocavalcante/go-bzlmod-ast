@@ -141,7 +141,7 @@ func NewModuleInfoCollector() *ModuleInfoCollector {
 	}
 }
 
-func (c *ModuleInfoCollector) Module(name label.Module, version label.Version, compatLevel int, repoName label.ApparentRepo) error {
+func (c *ModuleInfoCollector) Module(name label.Module, version label.Version, compatLevel int, repoName label.ApparentRepo, bazelCompatibility []string) error {
 	c.Info.Name = name.String()
 	c.Info.Version = version.String()
 	c.Info.CompatibilityLevel = compatLevel

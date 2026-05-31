@@ -9,7 +9,11 @@ import (
 // Each method returns an error to stop processing, or nil to continue.
 type Handler interface {
 	// Module is called for the module() declaration.
-	Module(name label.Module, version label.Version, compatibilityLevel int, repoName label.ApparentRepo) error
+	// `bazelCompatibility` is the verbatim `bazel_compatibility =
+	// [...]` list (empty when omitted) — version constraints the
+	// module declares on the Bazel binary, surfaced for consumers
+	// to validate without re-parsing.
+	Module(name label.Module, version label.Version, compatibilityLevel int, repoName label.ApparentRepo, bazelCompatibility []string) error
 
 	// BazelDep is called for each bazel_dep() declaration.
 	BazelDep(name label.Module, version label.Version, maxCompatibilityLevel int, repoName label.ApparentRepo, devDependency bool) error
@@ -76,7 +80,7 @@ func Walk(file *ModuleFile, handler Handler) error {
 func walkStatement(stmt Statement, handler Handler) error {
 	switch s := stmt.(type) {
 	case *ModuleDecl:
-		return handler.Module(s.Name, s.Version, s.CompatibilityLevel, s.RepoName)
+		return handler.Module(s.Name, s.Version, s.CompatibilityLevel, s.RepoName, s.BazelCompatibility)
 
 	case *BazelDep:
 		return handler.BazelDep(s.Name, s.Version, s.MaxCompatibilityLevel, s.RepoName, s.DevDependency)
@@ -134,7 +138,9 @@ func walkStatement(stmt Statement, handler Handler) error {
 //	}
 type BaseHandler struct{}
 
-func (h *BaseHandler) Module(label.Module, label.Version, int, label.ApparentRepo) error { return nil }
+func (h *BaseHandler) Module(label.Module, label.Version, int, label.ApparentRepo, []string) error {
+	return nil
+}
 func (h *BaseHandler) BazelDep(label.Module, label.Version, int, label.ApparentRepo, bool) error {
 	return nil
 }
