@@ -101,7 +101,7 @@ func (h *recordingHandler) RegisterExecutionPlatforms(patterns []string, devDep 
 	return h.err
 }
 
-func (h *recordingHandler) UnknownStatement(name string, pos Position) error {
+func (h *recordingHandler) UnknownStatement(name string, pos Span) error {
 	h.calls = append(h.calls, "UnknownStatement:"+name)
 	return h.err
 }
@@ -277,7 +277,7 @@ func TestWalk_RegisterStatements(t *testing.T) {
 func TestWalk_UnknownStatement(t *testing.T) {
 	file := &ModuleFile{
 		Statements: []Statement{
-			&UnknownStatement{FuncName: "custom_func", Pos: Position{Line: 10}},
+			&UnknownStatement{FuncName: "custom_func", Pos: Span{Start: Position{Line: 10}, End: Position{Line: 10}}},
 		},
 	}
 	handler := &recordingHandler{}
@@ -442,7 +442,7 @@ func TestBaseHandler_AllMethodsReturnNil(t *testing.T) {
 		t.Errorf("RegisterExecutionPlatforms returned error: %v", err)
 	}
 
-	if err := h.UnknownStatement("func", Position{}); err != nil {
+	if err := h.UnknownStatement("func", Span{}); err != nil {
 		t.Errorf("UnknownStatement returned error: %v", err)
 	}
 }

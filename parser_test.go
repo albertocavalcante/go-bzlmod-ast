@@ -288,12 +288,17 @@ bazel_dep(name = "rules_go", version = "0.50.1")
 	}
 
 	for _, stmt := range result.File.Statements {
-		pos := stmt.Position()
-		if pos.Filename != "test.bazel" {
-			t.Errorf("Position.Filename = %q, want 'test.bazel'", pos.Filename)
+		span := stmt.Span()
+		if span.Start.Filename != "test.bazel" {
+			t.Errorf("Span.Start.Filename = %q, want 'test.bazel'", span.Start.Filename)
 		}
-		if pos.Line <= 0 {
-			t.Errorf("Position.Line = %d, should be > 0", pos.Line)
+		if span.Start.Line <= 0 {
+			t.Errorf("Span.Start.Line = %d, should be > 0", span.Start.Line)
+		}
+		// End span should also be set — verifies bridge captures both
+		// halves of the buildtools-side span.
+		if span.End.Line < span.Start.Line {
+			t.Errorf("Span.End.Line = %d, should be >= Start.Line %d", span.End.Line, span.Start.Line)
 		}
 	}
 }

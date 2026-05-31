@@ -95,7 +95,7 @@ func (p *Parser) parseStatement(expr build.Expr) Statement {
 	if assign, ok := expr.(*build.AssignExpr); ok {
 		if call, ok := assign.RHS.(*build.CallExpr); ok {
 			if ident, ok := call.X.(*build.Ident); ok {
-				pos := p.position(call)
+				pos := p.span(call)
 				switch ident.Name {
 				case "use_extension":
 					ue := p.parseUseExtension(call, pos)
@@ -121,7 +121,7 @@ func (p *Parser) parseStatement(expr build.Expr) Statement {
 		return nil
 	}
 
-	pos := p.position(call)
+	pos := p.span(call)
 
 	// Handle method calls like go_sdk.from_file(...) - extension tag calls
 	if dotExpr, isDot := call.X.(*build.DotExpr); isDot {
@@ -175,7 +175,7 @@ func (p *Parser) parseStatement(expr build.Expr) Statement {
 	}
 }
 
-func (p *Parser) parseInclude(call *build.CallExpr, pos Position) *Include {
+func (p *Parser) parseInclude(call *build.CallExpr, pos Span) *Include {
 	inc := &Include{Pos: pos}
 
 	// include() takes a single positional string argument (label)
@@ -191,13 +191,13 @@ func (p *Parser) parseInclude(call *build.CallExpr, pos Position) *Include {
 	}
 
 	if inc.Label == "" {
-		p.addErrorf(pos, "include: missing required label argument")
+		p.addErrorf(pos.Start, "include: missing required label argument")
 	}
 
 	return inc
 }
 
-func (p *Parser) parseExtensionTagCall(call *build.CallExpr, dotExpr *build.DotExpr, pos Position) *ExtensionTagCall {
+func (p *Parser) parseExtensionTagCall(call *build.CallExpr, dotExpr *build.DotExpr, pos Span) *ExtensionTagCall {
 	tag := &ExtensionTagCall{
 		Pos:        pos,
 		Attributes: make(map[string]any),
@@ -224,13 +224,13 @@ func (p *Parser) parseExtensionTagCall(call *build.CallExpr, dotExpr *build.DotE
 	return tag
 }
 
-func (p *Parser) parseModule(call *build.CallExpr, pos Position) *ModuleDecl {
+func (p *Parser) parseModule(call *build.CallExpr, pos Span) *ModuleDecl {
 	decl := &ModuleDecl{Pos: pos}
 
 	if name := buildutil.String(call, "name"); name != "" {
 		m, err := label.NewModule(name)
 		if err != nil {
-			p.addErrorf(pos, "invalid module name: %v", err)
+			p.addErrorf(pos.Start, "invalid module name: %v", err)
 		} else {
 			decl.Name = m
 		}
@@ -239,7 +239,7 @@ func (p *Parser) parseModule(call *build.CallExpr, pos Position) *ModuleDecl {
 	if version := buildutil.String(call, "version"); version != "" {
 		v, err := label.NewVersion(version)
 		if err != nil {
-			p.addErrorf(pos, "invalid module version: %v", err)
+			p.addErrorf(pos.Start, "invalid module version: %v", err)
 		} else {
 			decl.Version = v
 		}
@@ -250,7 +250,7 @@ func (p *Parser) parseModule(call *build.CallExpr, pos Position) *ModuleDecl {
 	if repoName := buildutil.String(call, "repo_name"); repoName != "" {
 		r, err := label.NewApparentRepo(repoName)
 		if err != nil {
-			p.addErrorf(pos, "invalid repo_name: %v", err)
+			p.addErrorf(pos.Start, "invalid repo_name: %v", err)
 		} else {
 			decl.RepoName = r
 		}
@@ -261,18 +261,18 @@ func (p *Parser) parseModule(call *build.CallExpr, pos Position) *ModuleDecl {
 	return decl
 }
 
-func (p *Parser) parseBazelDep(call *build.CallExpr, pos Position) *BazelDep {
+func (p *Parser) parseBazelDep(call *build.CallExpr, pos Span) *BazelDep {
 	dep := &BazelDep{Pos: pos}
 
 	name := buildutil.String(call, "name")
 	if name == "" {
-		p.addErrorf(pos, "bazel_dep: missing required 'name' attribute")
+		p.addErrorf(pos.Start, "bazel_dep: missing required 'name' attribute")
 		return nil
 	}
 
 	m, err := label.NewModule(name)
 	if err != nil {
-		p.addErrorf(pos, "bazel_dep: invalid name: %v", err)
+		p.addErrorf(pos.Start, "bazel_dep: invalid name: %v", err)
 		return nil
 	}
 	dep.Name = m
@@ -280,11 +280,11 @@ func (p *Parser) parseBazelDep(call *build.CallExpr, pos Position) *BazelDep {
 	version := buildutil.String(call, "version")
 	if version == "" {
 		// Missing version is valid when using local_path_override or other overrides
-		p.addWarningf(pos, "bazel_dep: missing 'version' attribute for %s (valid if using override)", name)
+		p.addWarningf(pos.Start, "bazel_dep: missing 'version' attribute for %s (valid if using override)", name)
 	} else {
 		v, err := label.NewVersion(version)
 		if err != nil {
-			p.addErrorf(pos, "bazel_dep: invalid version for %s: %v", name, err)
+			p.addErrorf(pos.Start, "bazel_dep: invalid version for %s: %v", name, err)
 			return nil
 		}
 		dep.Version = v
@@ -296,7 +296,7 @@ func (p *Parser) parseBazelDep(call *build.CallExpr, pos Position) *BazelDep {
 	if repoName := buildutil.String(call, "repo_name"); repoName != "" {
 		r, err := label.NewApparentRepo(repoName)
 		if err != nil {
-			p.addErrorf(pos, "bazel_dep: invalid repo_name for %s: %v", name, err)
+			p.addErrorf(pos.Start, "bazel_dep: invalid repo_name for %s: %v", name, err)
 		} else {
 			dep.RepoName = r
 		}
@@ -305,7 +305,7 @@ func (p *Parser) parseBazelDep(call *build.CallExpr, pos Position) *BazelDep {
 	return dep
 }
 
-func (p *Parser) parseUseExtension(call *build.CallExpr, pos Position) *UseExtension {
+func (p *Parser) parseUseExtension(call *build.CallExpr, pos Span) *UseExtension {
 	ext := &UseExtension{Pos: pos}
 
 	// First positional arg is the .bzl file
@@ -313,7 +313,7 @@ func (p *Parser) parseUseExtension(call *build.CallExpr, pos Position) *UseExten
 		if str, ok := call.List[0].(*build.StringExpr); ok {
 			lbl, err := label.ParseApparentLabel(str.Value)
 			if err != nil {
-				p.addErrorf(pos, "use_extension: invalid extension file: %v", err)
+				p.addErrorf(pos.Start, "use_extension: invalid extension file: %v", err)
 			} else {
 				ext.ExtensionFile = lbl
 			}
@@ -325,7 +325,7 @@ func (p *Parser) parseUseExtension(call *build.CallExpr, pos Position) *UseExten
 		if str, ok := call.List[1].(*build.StringExpr); ok {
 			id, err := label.NewStarlarkIdentifier(str.Value)
 			if err != nil {
-				p.addErrorf(pos, "use_extension: invalid extension name: %v", err)
+				p.addErrorf(pos.Start, "use_extension: invalid extension name: %v", err)
 			} else {
 				ext.ExtensionName = id
 			}
@@ -338,7 +338,7 @@ func (p *Parser) parseUseExtension(call *build.CallExpr, pos Position) *UseExten
 	return ext
 }
 
-func (p *Parser) parseUseRepo(call *build.CallExpr, pos Position) *UseRepo {
+func (p *Parser) parseUseRepo(call *build.CallExpr, pos Span) *UseRepo {
 	repo := &UseRepo{Pos: pos}
 
 	// First positional arg is the extension proxy (we just capture repos for now)
@@ -354,7 +354,7 @@ func (p *Parser) parseUseRepo(call *build.CallExpr, pos Position) *UseRepo {
 	return repo
 }
 
-func (p *Parser) parseSingleVersionOverride(call *build.CallExpr, pos Position) *SingleVersionOverride {
+func (p *Parser) parseSingleVersionOverride(call *build.CallExpr, pos Span) *SingleVersionOverride {
 	m, ok := p.parseRequiredModuleName(call, pos, "single_version_override")
 	if !ok {
 		return nil
@@ -365,7 +365,7 @@ func (p *Parser) parseSingleVersionOverride(call *build.CallExpr, pos Position) 
 	if version := buildutil.String(call, "version"); version != "" {
 		v, err := label.NewVersion(version)
 		if err != nil {
-			p.addErrorf(pos, "single_version_override: invalid version: %v", err)
+			p.addErrorf(pos.Start, "single_version_override: invalid version: %v", err)
 		} else {
 			override.Version = v
 		}
@@ -379,7 +379,7 @@ func (p *Parser) parseSingleVersionOverride(call *build.CallExpr, pos Position) 
 	return override
 }
 
-func (p *Parser) parseMultipleVersionOverride(call *build.CallExpr, pos Position) *MultipleVersionOverride {
+func (p *Parser) parseMultipleVersionOverride(call *build.CallExpr, pos Span) *MultipleVersionOverride {
 	m, ok := p.parseRequiredModuleName(call, pos, "multiple_version_override")
 	if !ok {
 		return nil
@@ -390,7 +390,7 @@ func (p *Parser) parseMultipleVersionOverride(call *build.CallExpr, pos Position
 	for _, vs := range buildutil.StringList(call, "versions") {
 		v, err := label.NewVersion(vs)
 		if err != nil {
-			p.addErrorf(pos, "multiple_version_override: invalid version %q: %v", vs, err)
+			p.addErrorf(pos.Start, "multiple_version_override: invalid version %q: %v", vs, err)
 		} else {
 			override.Versions = append(override.Versions, v)
 		}
@@ -401,7 +401,7 @@ func (p *Parser) parseMultipleVersionOverride(call *build.CallExpr, pos Position
 	return override
 }
 
-func (p *Parser) parseGitOverride(call *build.CallExpr, pos Position) *GitOverride {
+func (p *Parser) parseGitOverride(call *build.CallExpr, pos Span) *GitOverride {
 	m, ok := p.parseRequiredModuleName(call, pos, "git_override")
 	if !ok {
 		return nil
@@ -422,7 +422,7 @@ func (p *Parser) parseGitOverride(call *build.CallExpr, pos Position) *GitOverri
 	}
 }
 
-func (p *Parser) parseArchiveOverride(call *build.CallExpr, pos Position) *ArchiveOverride {
+func (p *Parser) parseArchiveOverride(call *build.CallExpr, pos Span) *ArchiveOverride {
 	m, ok := p.parseRequiredModuleName(call, pos, "archive_override")
 	if !ok {
 		return nil
@@ -440,7 +440,7 @@ func (p *Parser) parseArchiveOverride(call *build.CallExpr, pos Position) *Archi
 	}
 }
 
-func (p *Parser) parseLocalPathOverride(call *build.CallExpr, pos Position) *LocalPathOverride {
+func (p *Parser) parseLocalPathOverride(call *build.CallExpr, pos Span) *LocalPathOverride {
 	m, ok := p.parseRequiredModuleName(call, pos, "local_path_override")
 	if !ok {
 		return nil
@@ -448,7 +448,7 @@ func (p *Parser) parseLocalPathOverride(call *build.CallExpr, pos Position) *Loc
 
 	path := buildutil.String(call, "path")
 	if path == "" {
-		p.addErrorf(pos, "local_path_override: missing required 'path'")
+		p.addErrorf(pos.Start, "local_path_override: missing required 'path'")
 	}
 
 	return &LocalPathOverride{
@@ -458,7 +458,7 @@ func (p *Parser) parseLocalPathOverride(call *build.CallExpr, pos Position) *Loc
 	}
 }
 
-func (p *Parser) parseRegisterToolchains(call *build.CallExpr, pos Position) *RegisterToolchains {
+func (p *Parser) parseRegisterToolchains(call *build.CallExpr, pos Span) *RegisterToolchains {
 	reg := &RegisterToolchains{Pos: pos}
 
 	// Positional args are the toolchain patterns
@@ -472,7 +472,7 @@ func (p *Parser) parseRegisterToolchains(call *build.CallExpr, pos Position) *Re
 	return reg
 }
 
-func (p *Parser) parseRegisterExecutionPlatforms(call *build.CallExpr, pos Position) *RegisterExecutionPlatforms {
+func (p *Parser) parseRegisterExecutionPlatforms(call *build.CallExpr, pos Span) *RegisterExecutionPlatforms {
 	reg := &RegisterExecutionPlatforms{Pos: pos}
 
 	// Positional args are the platform patterns
@@ -486,7 +486,7 @@ func (p *Parser) parseRegisterExecutionPlatforms(call *build.CallExpr, pos Posit
 	return reg
 }
 
-func (p *Parser) parseUseRepoRule(call *build.CallExpr, pos Position) *UseRepoRule {
+func (p *Parser) parseUseRepoRule(call *build.CallExpr, pos Span) *UseRepoRule {
 	rule := &UseRepoRule{Pos: pos}
 
 	// use_repo_rule takes two positional args: bzl_file and rule_name
@@ -512,7 +512,7 @@ func (p *Parser) parseUseRepoRule(call *build.CallExpr, pos Position) *UseRepoRu
 	return rule
 }
 
-func (p *Parser) parseInjectRepo(call *build.CallExpr, pos Position) *InjectRepo {
+func (p *Parser) parseInjectRepo(call *build.CallExpr, pos Span) *InjectRepo {
 	inject := &InjectRepo{
 		Pos:   pos,
 		Repos: make(map[string]string),
@@ -539,7 +539,7 @@ func (p *Parser) parseInjectRepo(call *build.CallExpr, pos Position) *InjectRepo
 	return inject
 }
 
-func (p *Parser) parseOverrideRepo(call *build.CallExpr, pos Position) *OverrideRepo {
+func (p *Parser) parseOverrideRepo(call *build.CallExpr, pos Span) *OverrideRepo {
 	override := &OverrideRepo{
 		Pos:   pos,
 		Repos: make(map[string]string),
@@ -566,17 +566,17 @@ func (p *Parser) parseOverrideRepo(call *build.CallExpr, pos Position) *Override
 	return override
 }
 
-func (p *Parser) parseFlagAlias(call *build.CallExpr, pos Position) *FlagAlias {
+func (p *Parser) parseFlagAlias(call *build.CallExpr, pos Span) *FlagAlias {
 	alias := &FlagAlias{Pos: pos}
 
 	alias.Name = buildutil.String(call, "name")
 	alias.StarlarkFlag = buildutil.String(call, "starlark_flag")
 
 	if alias.Name == "" {
-		p.addErrorf(pos, "flag_alias: missing required 'name' attribute")
+		p.addErrorf(pos.Start, "flag_alias: missing required 'name' attribute")
 	}
 	if alias.StarlarkFlag == "" {
-		p.addErrorf(pos, "flag_alias: missing required 'starlark_flag' attribute")
+		p.addErrorf(pos.Start, "flag_alias: missing required 'starlark_flag' attribute")
 	}
 
 	return alias
@@ -584,12 +584,14 @@ func (p *Parser) parseFlagAlias(call *build.CallExpr, pos Position) *FlagAlias {
 
 // Helper methods for extracting attributes
 
-func (p *Parser) position(expr build.Expr) Position {
-	start, _ := expr.Span()
-	return Position{
-		Filename: p.filename,
-		Line:     start.Line,
-		Column:   start.LineRune,
+// span returns the half-open [start, end) source range of expr.
+// Used to populate the Pos field of every typed statement so
+// downstream tooling can render underlines and fold ranges.
+func (p *Parser) span(expr build.Expr) Span {
+	start, end := expr.Span()
+	return Span{
+		Start: Position{Filename: p.filename, Line: start.Line, Column: start.LineRune},
+		End:   Position{Filename: p.filename, Line: end.Line, Column: end.LineRune},
 	}
 }
 
@@ -610,16 +612,16 @@ func (p *Parser) addWarningf(pos Position, format string, args ...any) {
 // parseRequiredModuleName extracts and validates the module_name attribute.
 // Returns the module and true on success, or zero value and false on error.
 // Errors are added to the parser's error list.
-func (p *Parser) parseRequiredModuleName(call *build.CallExpr, pos Position, funcName string) (label.Module, bool) {
+func (p *Parser) parseRequiredModuleName(call *build.CallExpr, pos Span, funcName string) (label.Module, bool) {
 	moduleName := buildutil.String(call, "module_name")
 	if moduleName == "" {
-		p.addErrorf(pos, "%s: missing required 'module_name'", funcName)
+		p.addErrorf(pos.Start, "%s: missing required 'module_name'", funcName)
 		return label.Module{}, false
 	}
 
 	m, err := label.NewModule(moduleName)
 	if err != nil {
-		p.addErrorf(pos, "%s: invalid module_name: %v", funcName, err)
+		p.addErrorf(pos.Start, "%s: invalid module_name: %v", funcName, err)
 		return label.Module{}, false
 	}
 	return m, true

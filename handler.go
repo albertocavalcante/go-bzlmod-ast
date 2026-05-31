@@ -42,7 +42,7 @@ type Handler interface {
 	RegisterExecutionPlatforms(patterns []string, devDependency bool) error
 
 	// UnknownStatement is called for unrecognized function calls.
-	UnknownStatement(name string, pos Position) error
+	UnknownStatement(name string, pos Span) error
 }
 
 // ExtensionProxy represents the return value of use_extension().
@@ -154,7 +154,7 @@ func (h *BaseHandler) ArchiveOverride(label.Module, []string, string, string, []
 func (h *BaseHandler) LocalPathOverride(label.Module, string) error    { return nil }
 func (h *BaseHandler) RegisterToolchains([]string, bool) error         { return nil }
 func (h *BaseHandler) RegisterExecutionPlatforms([]string, bool) error { return nil }
-func (h *BaseHandler) UnknownStatement(string, Position) error         { return nil }
+func (h *BaseHandler) UnknownStatement(string, Span) error             { return nil }
 
 // DependencyCollector is a handler that collects all bazel_dep declarations.
 type DependencyCollector struct {
