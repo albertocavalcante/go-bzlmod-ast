@@ -46,7 +46,7 @@ carved out as part of the three-lib refactor documented at
 import "github.com/albertocavalcante/go-bzlmod-ast"
 
 content, _ := os.ReadFile("MODULE.bazel")
-parsed, err := bzlmodast.Parse("MODULE.bazel", content)
+parsed, err := ast.Parse("MODULE.bazel", content)
 if err != nil { /* handle */ }
 
 // Walk with a custom handler:
@@ -56,7 +56,7 @@ func (h *myHandler) Module(name label.Module, version label.Version,
     compatibilityLevel int, repoName label.ApparentRepo) error { /* ... */ }
 // ... implement the other Handler methods ...
 
-if err := bzlmodast.Walk(parsed, &myHandler{}); err != nil { /* ... */ }
+if err := ast.Walk(parsed, &myHandler{}); err != nil { /* ... */ }
 ```
 
 ## Status
@@ -67,10 +67,12 @@ settles. Then tagged at `v0.1.0`.
 
 ## Layout decisions
 
-- **Root package is `bzlmodast`.** Callers import as
+- **Root package is `ast`** (unchanged from the original
+  internal-package shape). Callers import as
   `import "github.com/albertocavalcante/go-bzlmod-ast"` and call
-  `bzlmodast.Parse`, `bzlmodast.Walk`, etc. Promotes the
-  previously-internal `ast/` subpackage to a top-level lib.
+  `ast.Parse`, `ast.Walk`, etc. Go convention: package name
+  ≠ import path is fine when the package name is contextually
+  clear.
 - **No vendor/ on this repo.** Single non-vendored runtime dep is
   go-starlark-syntaxutil (sibling); the bazelbuild buildtools
   parser is committed under `third_party/`.

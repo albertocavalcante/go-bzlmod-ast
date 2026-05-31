@@ -41,10 +41,10 @@ covering the three-lib carve-out
 
 ### Changed (against previous internal-package shape)
 
-- Root package renamed from `ast` to `bzlmodast`. Callers import as
-  `github.com/albertocavalcante/go-bzlmod-ast` and call
-  `bzlmodast.Parse`, `bzlmodast.Walk`, etc. Subpackage form
-  (`bzlmodast/ast.Parse`) is no longer available.
+- Module path is now `github.com/albertocavalcante/go-bzlmod-ast`
+  (was `github.com/albertocavalcante/go-bzlmod/ast`). Package name
+  stays `ast`. Callers import the module path and call
+  `ast.Parse`, `ast.Walk`, etc.
 - Import paths rewritten:
   - `github.com/albertocavalcante/go-bzlmod/label` → `github.com/albertocavalcante/go-bzlmod-ast/label`
   - `github.com/albertocavalcante/go-bzlmod/internal/buildutil` → `github.com/albertocavalcante/go-bzlmod-ast/internal/buildutil`
