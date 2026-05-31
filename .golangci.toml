@@ -97,3 +97,10 @@ linters = ["gosec", "errcheck"]
 [[linters.exclusions.rules]]
 path = "third_party/"
 linters = ["errcheck", "gosec", "govet", "ineffassign", "intrange", "misspell", "staticcheck", "unparam", "unused", "whitespace", "copyloopvar"]
+
+# tools/ is maintainer CLI code (vendor-parser refreshes the
+# buildtools vendor). gosec flags expected patterns: dir/file
+# perms, user-supplied path reads. Not on the library's hot path.
+[[linters.exclusions.rules]]
+path = "tools/"
+linters = ["gosec"]
