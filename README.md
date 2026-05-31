@@ -50,18 +50,46 @@ carved out as part of the three-lib refactor documented at
 import "github.com/albertocavalcante/go-bzlmod-ast"
 
 content, _ := os.ReadFile("MODULE.bazel")
-parsed, err := ast.Parse("MODULE.bazel", content)
+result, err := ast.ParseContent("MODULE.bazel", content)
 if err != nil { /* handle */ }
 
-// Walk with a custom handler:
-type myHandler struct { /* per-project state */ }
+// Two paths from here:
 
-func (h *myHandler) Module(name label.Module, version label.Version,
-    compatibilityLevel int, repoName label.ApparentRepo) error { /* ... */ }
-// ... implement the other Handler methods ...
+// 1. Walk the file with a Handler. Embed BaseHandler and override
+//    only the statement methods you care about.
+type depCollector struct {
+    ast.BaseHandler
+    Deps []string
+}
 
-if err := ast.Walk(parsed, &myHandler{}); err != nil { /* ... */ }
+func (c *depCollector) BazelDep(name label.Module, version label.Version,
+    _ int, _ label.ApparentRepo, _ bool) error {
+    c.Deps = append(c.Deps, name.String())
+    return nil
+}
+
+c := &depCollector{}
+_ = ast.Walk(result.File, c)
+
+// 2. Iterate result.File.Statements directly and type-switch.
+//    Useful when you need access to the full typed struct (e.g.
+//    UseExtension.Tags slice or any other field the Handler
+//    callback doesn't expose).
+for _, stmt := range result.File.Statements {
+    switch s := stmt.(type) {
+    case *ast.BazelDep:
+        // ...
+    case *ast.UseExtension:
+        for _, tag := range s.Tags {
+            // ...
+        }
+    }
+}
 ```
+
+Each typed statement exposes its source `Span` via the `Statement`
+interface — read `stmt.Span().Start` for the start, `.End` for the
+end. The Span is also reachable as the typed struct's `Pos` field.
 
 ## Status
 
