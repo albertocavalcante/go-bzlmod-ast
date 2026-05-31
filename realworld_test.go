@@ -24,12 +24,14 @@ func TestParseRealWorld_RulesGo(t *testing.T) {
 		}
 	}
 
-	// Count statement types
+	// Count statement types. Tag calls are no longer standalone
+	// statements after the parser's link-tags post-pass — read them
+	// from each UseExtension's Tags slice instead.
 	counts := make(map[string]int)
 	var module *ModuleDecl
 	var deps []*BazelDep
 	var extensions []*UseExtension
-	var tagCalls []*ExtensionTagCall
+	var tagCalls []ExtensionTag
 	var overrides []Statement
 
 	for _, stmt := range result.File.Statements {
@@ -43,11 +45,12 @@ func TestParseRealWorld_RulesGo(t *testing.T) {
 		case *UseExtension:
 			counts["use_extension"]++
 			extensions = append(extensions, s)
+			for _, t := range s.Tags {
+				counts["extension_tag"]++
+				tagCalls = append(tagCalls, t)
+			}
 		case *UseRepo:
 			counts["use_repo"]++
-		case *ExtensionTagCall:
-			counts["extension_tag"]++
-			tagCalls = append(tagCalls, s)
 		case *LocalPathOverride:
 			counts["local_path_override"]++
 			overrides = append(overrides, s)
@@ -98,26 +101,28 @@ func TestParseRealWorld_RulesGo(t *testing.T) {
 		t.Errorf("Expected at least 2 use_extension, got %d", len(extensions))
 	}
 
-	// Verify extension tag calls (go_sdk.from_file, etc.)
+	// Verify extension tag calls (go_sdk.from_file, etc.).
+	// Tags live on their UseExtension after the parser link-pass;
+	// walk extensions and check tag names by extension variable.
 	if len(tagCalls) < 3 {
 		t.Errorf("Expected at least 3 extension tag calls, got %d", len(tagCalls))
 	}
-
-	// Check specific tag calls
 	foundFromFile := false
 	foundDownload := false
-	for _, tag := range tagCalls {
-		t.Logf("Found extension tag: %s.%s", tag.Extension, tag.TagName)
-		if tag.Extension == "go_sdk" && tag.TagName == "from_file" {
-			foundFromFile = true
-			if name, ok := tag.Attributes["name"].(string); ok {
-				if name != "go_default_sdk" {
-					t.Errorf("go_sdk.from_file name = %q, want 'go_default_sdk'", name)
+	for _, ext := range extensions {
+		for _, tag := range ext.Tags {
+			t.Logf("Found extension tag: %s.%s", ext.Variable, tag.Name)
+			if ext.Variable == "go_sdk" && tag.Name == "from_file" {
+				foundFromFile = true
+				if name, ok := tag.Attributes["name"].(string); ok {
+					if name != "go_default_sdk" {
+						t.Errorf("go_sdk.from_file name = %q, want 'go_default_sdk'", name)
+					}
 				}
 			}
-		}
-		if tag.Extension == "dev_go_sdk" && tag.TagName == "download" {
-			foundDownload = true
+			if ext.Variable == "dev_go_sdk" && tag.Name == "download" {
+				foundDownload = true
+			}
 		}
 	}
 	if !foundFromFile {
@@ -195,10 +200,18 @@ npm.npm_translate_lock(
 		t.Fatalf("Parse error: %v", err)
 	}
 
-	var tagCalls []*ExtensionTagCall
+	// Flatten extension tags across all UseExtensions, in source
+	// order, paired with the extension's variable name.
+	type taggedCall struct {
+		ExtVar string
+		Tag    ExtensionTag
+	}
+	var tagCalls []taggedCall
 	for _, stmt := range result.File.Statements {
-		if tag, ok := stmt.(*ExtensionTagCall); ok {
-			tagCalls = append(tagCalls, tag)
+		if ue, ok := stmt.(*UseExtension); ok {
+			for _, t := range ue.Tags {
+				tagCalls = append(tagCalls, taggedCall{ExtVar: ue.Variable, Tag: t})
+			}
 		}
 	}
 
@@ -207,21 +220,21 @@ npm.npm_translate_lock(
 	}
 
 	// Verify go_sdk.download
-	if tagCalls[0].Extension != "go_sdk" || tagCalls[0].TagName != "download" {
-		t.Errorf("tagCalls[0] = %s.%s, want go_sdk.download", tagCalls[0].Extension, tagCalls[0].TagName)
+	if tagCalls[0].ExtVar != "go_sdk" || tagCalls[0].Tag.Name != "download" {
+		t.Errorf("tagCalls[0] = %s.%s, want go_sdk.download", tagCalls[0].ExtVar, tagCalls[0].Tag.Name)
 	}
-	if version, ok := tagCalls[0].Attributes["version"].(string); !ok || version != "1.22.0" {
-		t.Errorf("go_sdk.download version = %v, want '1.22.0'", tagCalls[0].Attributes["version"])
+	if version, ok := tagCalls[0].Tag.Attributes["version"].(string); !ok || version != "1.22.0" {
+		t.Errorf("go_sdk.download version = %v, want '1.22.0'", tagCalls[0].Tag.Attributes["version"])
 	}
 
 	// Verify go_sdk.from_file
-	if tagCalls[1].Extension != "go_sdk" || tagCalls[1].TagName != "from_file" {
-		t.Errorf("tagCalls[1] = %s.%s, want go_sdk.from_file", tagCalls[1].Extension, tagCalls[1].TagName)
+	if tagCalls[1].ExtVar != "go_sdk" || tagCalls[1].Tag.Name != "from_file" {
+		t.Errorf("tagCalls[1] = %s.%s, want go_sdk.from_file", tagCalls[1].ExtVar, tagCalls[1].Tag.Name)
 	}
 
 	// Verify npm.npm_translate_lock
-	if tagCalls[2].Extension != "npm" || tagCalls[2].TagName != "npm_translate_lock" {
-		t.Errorf("tagCalls[2] = %s.%s, want npm.npm_translate_lock", tagCalls[2].Extension, tagCalls[2].TagName)
+	if tagCalls[2].ExtVar != "npm" || tagCalls[2].Tag.Name != "npm_translate_lock" {
+		t.Errorf("tagCalls[2] = %s.%s, want npm.npm_translate_lock", tagCalls[2].ExtVar, tagCalls[2].Tag.Name)
 	}
 }
 
@@ -254,10 +267,12 @@ npm.npm_translate_lock(
 		t.Fatalf("Parse error: %v", err)
 	}
 
-	var tagCalls []*ExtensionTagCall
+	// Tags now live on their parent UseExtension after the parser's
+	// link-tags post-pass — flatten them in source order.
+	var tagCalls []ExtensionTag
 	for _, stmt := range result.File.Statements {
-		if tag, ok := stmt.(*ExtensionTagCall); ok {
-			tagCalls = append(tagCalls, tag)
+		if ue, ok := stmt.(*UseExtension); ok {
+			tagCalls = append(tagCalls, ue.Tags...)
 		}
 	}
 

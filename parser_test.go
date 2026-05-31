@@ -614,23 +614,24 @@ go.download(name = "another_sdk", version = "1.22.0")
 		t.Fatalf("ParseContent error: %v", err)
 	}
 
-	var tags []*ExtensionTagCall
+	// After the parser's link-tags post-pass, tag calls live as
+	// ExtensionTag entries on their UseExtension's Tags slice, not
+	// as top-level statements. Find the UseExtension and read its
+	// tags.
+	var tags []ExtensionTag
 	for _, stmt := range result.File.Statements {
-		if t, ok := stmt.(*ExtensionTagCall); ok {
-			tags = append(tags, t)
+		if ue, ok := stmt.(*UseExtension); ok {
+			tags = ue.Tags
 		}
 	}
 
 	if len(tags) != 2 {
-		t.Fatalf("Expected 2 extension tag calls, got %d", len(tags))
+		t.Fatalf("Expected 2 extension tags on the UseExtension, got %d", len(tags))
 	}
 
 	// First tag: go.sdk(...)
-	if tags[0].Extension != "go" {
-		t.Errorf("tags[0].Extension = %q, want 'go'", tags[0].Extension)
-	}
-	if tags[0].TagName != "sdk" {
-		t.Errorf("tags[0].TagName = %q, want 'sdk'", tags[0].TagName)
+	if tags[0].Name != "sdk" {
+		t.Errorf("tags[0].Name = %q, want 'sdk'", tags[0].Name)
 	}
 	if name, ok := tags[0].Attributes["name"].(string); !ok || name != "go_sdk" {
 		t.Errorf("tags[0].Attributes['name'] = %v", tags[0].Attributes["name"])
@@ -640,8 +641,8 @@ go.download(name = "another_sdk", version = "1.22.0")
 	}
 
 	// Second tag: go.download(...)
-	if tags[1].TagName != "download" {
-		t.Errorf("tags[1].TagName = %q, want 'download'", tags[1].TagName)
+	if tags[1].Name != "download" {
+		t.Errorf("tags[1].Name = %q, want 'download'", tags[1].Name)
 	}
 }
 

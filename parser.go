@@ -83,6 +83,15 @@ func (p *Parser) parse(content []byte) (*ParseResult, error) {
 		}
 	}
 
+	// Post-pass: attach each *ExtensionTagCall to the matching
+	// *UseExtension's Tags slice and drop it from the top-level
+	// Statements. Without this, `python.toolchain(...)` calls
+	// would surface as standalone statements and consumers using
+	// the Handler interface would miss them entirely (Handler has
+	// no method for ExtensionTagCall — tags belong to their
+	// extension by convention).
+	file.Statements = linkExtensionTags(file.Statements)
+
 	return &ParseResult{
 		File:     file,
 		Errors:   p.errors,
@@ -647,4 +656,45 @@ func (p *Parser) parseRequiredModuleName(call *build.CallExpr, pos Span, funcNam
 		return label.Module{}, false
 	}
 	return m, true
+}
+
+// linkExtensionTags consumes ExtensionTagCall statements and attaches
+// each as an ExtensionTag on the corresponding UseExtension found by
+// matching Variable name. Returns the statement slice with the
+// consumed ExtensionTagCalls removed. Orphan tag calls (no matching
+// use_extension) stay in place — consumers can inspect them via
+// direct iteration if they care.
+func linkExtensionTags(stmts []Statement) []Statement {
+	// Index UseExtensions by Variable for O(1) lookup. Multiple
+	// use_extensions with the same Variable would be unusual; we
+	// link to the FIRST occurrence.
+	extByVar := map[string]*UseExtension{}
+	for _, s := range stmts {
+		if ue, ok := s.(*UseExtension); ok {
+			if _, exists := extByVar[ue.Variable]; !exists {
+				extByVar[ue.Variable] = ue
+			}
+		}
+	}
+	out := stmts[:0]
+	for _, s := range stmts {
+		tc, isTagCall := s.(*ExtensionTagCall)
+		if !isTagCall {
+			out = append(out, s)
+			continue
+		}
+		ue, ok := extByVar[tc.Extension]
+		if !ok {
+			// Orphan tag call; keep it in the statement list so
+			// consumers walking statements directly can see it.
+			out = append(out, s)
+			continue
+		}
+		ue.Tags = append(ue.Tags, ExtensionTag{
+			Pos:        tc.Pos,
+			Name:       tc.TagName,
+			Attributes: tc.Attributes,
+		})
+	}
+	return out
 }
