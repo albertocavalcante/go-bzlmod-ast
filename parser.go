@@ -3,6 +3,7 @@ package ast
 import (
 	"fmt"
 	"os"
+	"reflect"
 
 	"github.com/albertocavalcante/go-bzlmod-ast/buildutil"
 	"github.com/albertocavalcante/go-bzlmod-ast/label"
@@ -78,9 +79,20 @@ func (p *Parser) parse(content []byte) (*ParseResult, error) {
 	}
 
 	for _, stmt := range raw.Stmt {
-		if s := p.parseStatement(stmt); s != nil {
-			file.Statements = append(file.Statements, s)
+		s := p.parseStatement(stmt)
+		if s == nil {
+			continue
 		}
+		// Defend against typed-nil: per-directive helpers (e.g.
+		// parseBazelDep) return a typed nil pointer when an error
+		// has been recorded into p.errors. Wrapping a (*T)(nil)
+		// into the Statement interface yields a non-nil interface,
+		// so the bare `s != nil` check above wouldn't catch it and
+		// downstream handlers would dereference nil.
+		if v := reflect.ValueOf(s); v.Kind() == reflect.Pointer && v.IsNil() {
+			continue
+		}
+		file.Statements = append(file.Statements, s)
 	}
 
 	// Attach each ExtensionTagCall to its parent UseExtension.Tags

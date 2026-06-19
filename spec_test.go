@@ -48,6 +48,31 @@ func TestIsNoopAtHead(t *testing.T) {
 	}
 }
 
+// TestParse_DropsTypedNilFromParseHelpers pins the fix for the typed-nil
+// trap: when a per-directive parse helper (e.g. parseBazelDep) returns
+// a typed-nil pointer after recording an error, the result must not
+// leak into file.Statements (where the interface wrapping a nil
+// pointer would survive an `s != nil` check and crash downstream
+// handlers).
+func TestParse_DropsTypedNilFromParseHelpers(t *testing.T) {
+	// bazel_dep without name -> parseBazelDep returns (*BazelDep)(nil).
+	const src = `bazel_dep(version = "1.0.0")`
+	result, err := ParseContent("MODULE.bazel", []byte(src))
+	if err != nil {
+		t.Fatalf("ParseContent: %v", err)
+	}
+	if !result.HasErrors() {
+		t.Fatal("expected an error in result.Errors for missing-name bazel_dep")
+	}
+	for _, stmt := range result.File.Statements {
+		if stmt == nil {
+			t.Fatal("nil statement leaked into File.Statements")
+		}
+		// Walk must not panic on whatever survived the filter.
+		_ = Walk(result.File, &BaseHandler{})
+	}
+}
+
 func TestParse_BazelDepRepoNameNone(t *testing.T) {
 	const src = `
 module(name = "root", version = "1.0.0")
