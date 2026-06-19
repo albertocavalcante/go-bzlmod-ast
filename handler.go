@@ -1,65 +1,32 @@
 package ast
 
-import (
-	"github.com/albertocavalcante/go-bzlmod-ast/label"
-)
-
 // Handler processes MODULE.bazel statements.
-// Implement this interface to customize how MODULE.bazel content is handled.
-// Each method returns an error to stop processing, or nil to continue.
+//
+// Each method receives a pointer to the typed AST node for the
+// directive that fired. Implementations should treat the pointer
+// as read-only; ast does not enforce immutability but downstream
+// code may share the same node across multiple Walk passes.
+//
+// Returning a non-nil error from any method stops the Walk and
+// surfaces the error verbatim to the caller.
+//
+// Adding fields to the AST node types is non-breaking for Handler
+// implementations — only direct dependents of the new field need
+// updating.
 type Handler interface {
-	// Module is called for the module() declaration. bazelCompatibility
-	// is the verbatim `bazel_compatibility = [...]` constraint list
-	// (empty when omitted).
-	Module(name label.Module, version label.Version, compatibilityLevel int, repoName label.ApparentRepo, bazelCompatibility []string) error
-
-	// BazelDep is called for each bazel_dep() declaration.
-	BazelDep(name label.Module, version label.Version, maxCompatibilityLevel int, repoName label.ApparentRepo, devDependency bool) error
-
-	// UseExtension is called for use_extension() declarations.
-	// variable is the LHS identifier (e.g. "python" in `python =
-	// use_extension(...)`), empty when the call has no assignment.
-	// tags holds every `<variable>.<tag>(...)` invocation in source
-	// order; the attribute map carries per-tag kwargs as map[string]any.
-	UseExtension(variable string, extensionFile label.ApparentLabel, extensionName label.StarlarkIdentifier, devDependency, isolate bool, tags []ExtensionTag) error
-
-	// UseRepo is called for use_repo() declarations. extensionVariable
-	// is the LHS identifier of the use_extension that this call
-	// references (empty when no such link is recoverable from the AST).
-	// repos are positional imports; renames carries the
-	// `<alias> = "<remote>"` kwarg form.
-	UseRepo(extensionVariable string, repos []string, renames map[string]string, devDependency bool) error
-
-	// SingleVersionOverride is called for single_version_override().
-	SingleVersionOverride(moduleName label.Module, version label.Version, registry string, patches []string, patchCmds []string, patchStrip int) error
-
-	// MultipleVersionOverride is called for multiple_version_override().
-	MultipleVersionOverride(moduleName label.Module, versions []label.Version, registry string) error
-
-	// GitOverride is called for git_override().
-	GitOverride(moduleName label.Module, remote, commit, tag, branch string, patches, patchCmds []string, patchStrip int, initSubmodules bool, stripPrefix string) error
-
-	// ArchiveOverride is called for archive_override().
-	ArchiveOverride(moduleName label.Module, urls []string, integrity, stripPrefix string, patches, patchCmds []string, patchStrip int) error
-
-	// LocalPathOverride is called for local_path_override().
-	LocalPathOverride(moduleName label.Module, path string) error
-
-	// RegisterToolchains is called for register_toolchains().
-	RegisterToolchains(patterns []string, devDependency bool) error
-
-	// RegisterExecutionPlatforms is called for register_execution_platforms().
-	RegisterExecutionPlatforms(patterns []string, devDependency bool) error
-
-	// Include is called for include() statements (Bazel 7.2+).
-	// labelStr is the target label of the included MODULE.bazel
-	// fragment, emitted verbatim. Bazel only honors include() in root
-	// modules and modules with non-registry overrides, but the
-	// Handler dispatches every call; consumers decide what to do.
-	Include(labelStr string, pos Span) error
-
-	// UnknownStatement is called for unrecognized function calls.
-	UnknownStatement(name string, pos Span) error
+	Module(*ModuleDecl) error
+	BazelDep(*BazelDep) error
+	UseExtension(*UseExtension) error
+	UseRepo(*UseRepo) error
+	SingleVersionOverride(*SingleVersionOverride) error
+	MultipleVersionOverride(*MultipleVersionOverride) error
+	GitOverride(*GitOverride) error
+	ArchiveOverride(*ArchiveOverride) error
+	LocalPathOverride(*LocalPathOverride) error
+	RegisterToolchains(*RegisterToolchains) error
+	RegisterExecutionPlatforms(*RegisterExecutionPlatforms) error
+	Include(*Include) error
+	UnknownStatement(*UnknownStatement) error
 }
 
 // Walk traverses a ModuleFile and calls the handler for each statement.
@@ -75,45 +42,32 @@ func Walk(file *ModuleFile, handler Handler) error {
 func walkStatement(stmt Statement, handler Handler) error {
 	switch s := stmt.(type) {
 	case *ModuleDecl:
-		return handler.Module(s.Name, s.Version, s.CompatibilityLevel, s.RepoName, s.BazelCompatibility)
-
+		return handler.Module(s)
 	case *BazelDep:
-		return handler.BazelDep(s.Name, s.Version, s.MaxCompatibilityLevel, s.RepoName, s.DevDependency)
-
+		return handler.BazelDep(s)
 	case *UseExtension:
-		return handler.UseExtension(s.Variable, s.ExtensionFile, s.ExtensionName, s.DevDependency, s.Isolate, s.Tags)
-
+		return handler.UseExtension(s)
 	case *UseRepo:
-		return handler.UseRepo(s.ExtensionVariable, s.Repos, s.Renames, s.DevDependency)
-
+		return handler.UseRepo(s)
 	case *SingleVersionOverride:
-		return handler.SingleVersionOverride(s.Module, s.Version, s.Registry, s.Patches, s.PatchCmds, s.PatchStrip)
-
+		return handler.SingleVersionOverride(s)
 	case *MultipleVersionOverride:
-		return handler.MultipleVersionOverride(s.Module, s.Versions, s.Registry)
-
+		return handler.MultipleVersionOverride(s)
 	case *GitOverride:
-		return handler.GitOverride(s.Module, s.Remote, s.Commit, s.Tag, s.Branch, s.Patches, s.PatchCmds, s.PatchStrip, s.InitSubmodules, s.StripPrefix)
-
+		return handler.GitOverride(s)
 	case *ArchiveOverride:
-		return handler.ArchiveOverride(s.Module, s.URLs, s.Integrity, s.StripPrefix, s.Patches, s.PatchCmds, s.PatchStrip)
-
+		return handler.ArchiveOverride(s)
 	case *LocalPathOverride:
-		return handler.LocalPathOverride(s.Module, s.Path)
-
+		return handler.LocalPathOverride(s)
 	case *RegisterToolchains:
-		return handler.RegisterToolchains(s.Patterns, s.DevDependency)
-
+		return handler.RegisterToolchains(s)
 	case *RegisterExecutionPlatforms:
-		return handler.RegisterExecutionPlatforms(s.Patterns, s.DevDependency)
-
+		return handler.RegisterExecutionPlatforms(s)
 	case *Include:
-		return handler.Include(s.Label, s.Pos)
-
+		return handler.Include(s)
 	case *UnknownStatement:
-		return handler.UnknownStatement(s.FuncName, s.Pos)
+		return handler.UnknownStatement(s)
 	}
-
 	return nil
 }
 
@@ -127,179 +81,74 @@ func walkStatement(stmt Statement, handler Handler) error {
 //	    deps []string
 //	}
 //
-//	func (h *MyHandler) BazelDep(name label.Module, ...) error {
-//	    h.deps = append(h.deps, name.String())
+//	func (h *MyHandler) BazelDep(d *ast.BazelDep) error {
+//	    h.deps = append(h.deps, d.Name.String())
 //	    return nil
 //	}
 type BaseHandler struct{}
 
-func (h *BaseHandler) Module(label.Module, label.Version, int, label.ApparentRepo, []string) error {
+func (h *BaseHandler) Module(*ModuleDecl) error                                 { return nil }
+func (h *BaseHandler) BazelDep(*BazelDep) error                                 { return nil }
+func (h *BaseHandler) UseExtension(*UseExtension) error                         { return nil }
+func (h *BaseHandler) UseRepo(*UseRepo) error                                   { return nil }
+func (h *BaseHandler) SingleVersionOverride(*SingleVersionOverride) error       { return nil }
+func (h *BaseHandler) MultipleVersionOverride(*MultipleVersionOverride) error   { return nil }
+func (h *BaseHandler) GitOverride(*GitOverride) error                           { return nil }
+func (h *BaseHandler) ArchiveOverride(*ArchiveOverride) error                   { return nil }
+func (h *BaseHandler) LocalPathOverride(*LocalPathOverride) error               { return nil }
+func (h *BaseHandler) RegisterToolchains(*RegisterToolchains) error             { return nil }
+func (h *BaseHandler) RegisterExecutionPlatforms(*RegisterExecutionPlatforms) error {
 	return nil
 }
-func (h *BaseHandler) BazelDep(label.Module, label.Version, int, label.ApparentRepo, bool) error {
-	return nil
-}
-func (h *BaseHandler) UseExtension(string, label.ApparentLabel, label.StarlarkIdentifier, bool, bool, []ExtensionTag) error {
-	return nil
-}
-func (h *BaseHandler) UseRepo(string, []string, map[string]string, bool) error { return nil }
-func (h *BaseHandler) SingleVersionOverride(label.Module, label.Version, string, []string, []string, int) error {
-	return nil
-}
-func (h *BaseHandler) MultipleVersionOverride(label.Module, []label.Version, string) error {
-	return nil
-}
-func (h *BaseHandler) GitOverride(label.Module, string, string, string, string, []string, []string, int, bool, string) error {
-	return nil
-}
-func (h *BaseHandler) ArchiveOverride(label.Module, []string, string, string, []string, []string, int) error {
-	return nil
-}
-func (h *BaseHandler) LocalPathOverride(label.Module, string) error    { return nil }
-func (h *BaseHandler) RegisterToolchains([]string, bool) error         { return nil }
-func (h *BaseHandler) RegisterExecutionPlatforms([]string, bool) error { return nil }
-func (h *BaseHandler) Include(string, Span) error                      { return nil }
-func (h *BaseHandler) UnknownStatement(string, Span) error             { return nil }
+func (h *BaseHandler) Include(*Include) error                   { return nil }
+func (h *BaseHandler) UnknownStatement(*UnknownStatement) error { return nil }
 
-// DependencyCollector is a handler that collects all bazel_dep declarations.
+// DependencyCollector is a handler that collects pointers to every
+// bazel_dep declaration. The pointers reference nodes owned by the
+// parsed ModuleFile; do not mutate them.
 type DependencyCollector struct {
 	BaseHandler
-	Dependencies []BazelDepInfo
+	Dependencies []*BazelDep
 }
 
-// BazelDepInfo contains information about a bazel_dep.
-type BazelDepInfo struct {
-	Name                  label.Module
-	Version               label.Version
-	MaxCompatibilityLevel int
-	RepoName              label.ApparentRepo
-	DevDependency         bool
-}
-
-func (c *DependencyCollector) BazelDep(name label.Module, version label.Version, maxCompat int, repoName label.ApparentRepo, devDep bool) error {
-	c.Dependencies = append(c.Dependencies, BazelDepInfo{
-		Name:                  name,
-		Version:               version,
-		MaxCompatibilityLevel: maxCompat,
-		RepoName:              repoName,
-		DevDependency:         devDep,
-	})
+func (c *DependencyCollector) BazelDep(d *BazelDep) error {
+	c.Dependencies = append(c.Dependencies, d)
 	return nil
 }
 
-// OverrideCollector is a handler that collects all override declarations.
-// Use Walk(file, collector) to populate the slices with override information.
+// OverrideCollector is a handler that collects pointers to every
+// override declaration, sorted by override kind. The pointers
+// reference nodes owned by the parsed ModuleFile; do not mutate them.
 type OverrideCollector struct {
 	BaseHandler
-	SingleVersionOverrides   []SingleVersionOverrideInfo
-	MultipleVersionOverrides []MultipleVersionOverrideInfo
-	GitOverrides             []GitOverrideInfo
-	ArchiveOverrides         []ArchiveOverrideInfo
-	LocalPathOverrides       []LocalPathOverrideInfo
+	SingleVersionOverrides   []*SingleVersionOverride
+	MultipleVersionOverrides []*MultipleVersionOverride
+	GitOverrides             []*GitOverride
+	ArchiveOverrides         []*ArchiveOverride
+	LocalPathOverrides       []*LocalPathOverride
 }
 
-// SingleVersionOverrideInfo holds data from a single_version_override() call.
-type SingleVersionOverrideInfo struct {
-	ModuleName label.Module
-	Version    label.Version
-	Registry   string
-	Patches    []string
-	PatchCmds  []string
-	PatchStrip int
-}
-
-// MultipleVersionOverrideInfo holds data from a multiple_version_override() call.
-type MultipleVersionOverrideInfo struct {
-	ModuleName label.Module
-	Versions   []label.Version
-	Registry   string
-}
-
-// GitOverrideInfo holds data from a git_override() call.
-type GitOverrideInfo struct {
-	ModuleName     label.Module
-	Remote         string
-	Commit         string
-	Tag            string
-	Branch         string
-	Patches        []string
-	PatchCmds      []string
-	PatchStrip     int
-	InitSubmodules bool
-	StripPrefix    string
-}
-
-// ArchiveOverrideInfo holds data from an archive_override() call.
-type ArchiveOverrideInfo struct {
-	ModuleName  label.Module
-	URLs        []string
-	Integrity   string
-	StripPrefix string
-	Patches     []string
-	PatchCmds   []string
-	PatchStrip  int
-}
-
-// LocalPathOverrideInfo holds data from a local_path_override() call.
-type LocalPathOverrideInfo struct {
-	ModuleName label.Module
-	Path       string
-}
-
-func (c *OverrideCollector) SingleVersionOverride(moduleName label.Module, version label.Version, registry string, patches, patchCmds []string, patchStrip int) error {
-	c.SingleVersionOverrides = append(c.SingleVersionOverrides, SingleVersionOverrideInfo{
-		ModuleName: moduleName,
-		Version:    version,
-		Registry:   registry,
-		Patches:    patches,
-		PatchCmds:  patchCmds,
-		PatchStrip: patchStrip,
-	})
+func (c *OverrideCollector) SingleVersionOverride(o *SingleVersionOverride) error {
+	c.SingleVersionOverrides = append(c.SingleVersionOverrides, o)
 	return nil
 }
 
-func (c *OverrideCollector) MultipleVersionOverride(moduleName label.Module, versions []label.Version, registry string) error {
-	c.MultipleVersionOverrides = append(c.MultipleVersionOverrides, MultipleVersionOverrideInfo{
-		ModuleName: moduleName,
-		Versions:   versions,
-		Registry:   registry,
-	})
+func (c *OverrideCollector) MultipleVersionOverride(o *MultipleVersionOverride) error {
+	c.MultipleVersionOverrides = append(c.MultipleVersionOverrides, o)
 	return nil
 }
 
-func (c *OverrideCollector) GitOverride(moduleName label.Module, remote, commit, tag, branch string, patches, patchCmds []string, patchStrip int, initSubmodules bool, stripPrefix string) error {
-	c.GitOverrides = append(c.GitOverrides, GitOverrideInfo{
-		ModuleName:     moduleName,
-		Remote:         remote,
-		Commit:         commit,
-		Tag:            tag,
-		Branch:         branch,
-		Patches:        patches,
-		PatchCmds:      patchCmds,
-		PatchStrip:     patchStrip,
-		InitSubmodules: initSubmodules,
-		StripPrefix:    stripPrefix,
-	})
+func (c *OverrideCollector) GitOverride(o *GitOverride) error {
+	c.GitOverrides = append(c.GitOverrides, o)
 	return nil
 }
 
-func (c *OverrideCollector) ArchiveOverride(moduleName label.Module, urls []string, integrity, stripPrefix string, patches, patchCmds []string, patchStrip int) error {
-	c.ArchiveOverrides = append(c.ArchiveOverrides, ArchiveOverrideInfo{
-		ModuleName:  moduleName,
-		URLs:        urls,
-		Integrity:   integrity,
-		StripPrefix: stripPrefix,
-		Patches:     patches,
-		PatchCmds:   patchCmds,
-		PatchStrip:  patchStrip,
-	})
+func (c *OverrideCollector) ArchiveOverride(o *ArchiveOverride) error {
+	c.ArchiveOverrides = append(c.ArchiveOverrides, o)
 	return nil
 }
 
-func (c *OverrideCollector) LocalPathOverride(moduleName label.Module, path string) error {
-	c.LocalPathOverrides = append(c.LocalPathOverrides, LocalPathOverrideInfo{
-		ModuleName: moduleName,
-		Path:       path,
-	})
+func (c *OverrideCollector) LocalPathOverride(o *LocalPathOverride) error {
+	c.LocalPathOverrides = append(c.LocalPathOverrides, o)
 	return nil
 }

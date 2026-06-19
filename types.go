@@ -52,6 +52,18 @@ type Comment struct {
 	Text string
 }
 
+// KwargEntry is one keyword argument captured verbatim from source.
+// Used by git_override and archive_override, which Bazel forwards
+// to git_repository / http_archive as open kwargs — there's no
+// closed kwarg set to type-check against. KwargEntry preserves
+// the source-order list, the raw value (string / int / bool /
+// []string / nested map), and the span for diagnostics.
+type KwargEntry struct {
+	Pos   Span
+	Name  string
+	Value any
+}
+
 // ModuleDecl represents a module() declaration.
 type ModuleDecl struct {
 	Pos                Span
@@ -73,6 +85,12 @@ type BazelDep struct {
 	MaxCompatibilityLevel int
 	RepoName              label.ApparentRepo
 	DevDependency         bool
+	// IsNodepDep is true when the source declared repo_name=None
+	// literally, signalling a nodep dependency: the version flows
+	// into module selection but no repo edge is created. An
+	// omitted repo_name yields a regular bazel_dep with empty
+	// RepoName, not a nodep dep.
+	IsNodepDep bool
 }
 
 func (b *BazelDep) Span() Span   { return b.Pos }
@@ -164,6 +182,11 @@ func (o *MultipleVersionOverride) isStatement()             {}
 func (o *MultipleVersionOverride) isOverride()              {}
 
 // GitOverride represents git_override().
+//
+// Bazel forwards all kwargs except module_name to the underlying
+// git_repository repo rule via extraKeywords. The fields below cover
+// the commonly-used kwargs; anything else lands in ExtraKwargs so
+// no information is lost.
 type GitOverride struct {
 	Pos            Span
 	Module         label.Module
@@ -176,6 +199,14 @@ type GitOverride struct {
 	PatchStrip     int
 	InitSubmodules bool
 	StripPrefix    string
+	// Verbose mirrors the verbose= kwarg, enabling verbose patch
+	// output when Bazel applies the override.
+	Verbose bool
+	// ExtraKwargs preserves any kwargs not represented by the typed
+	// fields above. Source order is preserved. Bazel itself accepts
+	// arbitrary kwargs here (forwarded to git_repository), so the
+	// set isn't closed.
+	ExtraKwargs []KwargEntry
 }
 
 func (o *GitOverride) Span() Span               { return o.Pos }
@@ -184,6 +215,11 @@ func (o *GitOverride) isStatement()             {}
 func (o *GitOverride) isOverride()              {}
 
 // ArchiveOverride represents archive_override().
+//
+// Bazel forwards all kwargs except module_name to the underlying
+// http_archive repo rule via extraKeywords. The fields below cover
+// the commonly-used kwargs; anything else lands in ExtraKwargs so
+// no information is lost.
 type ArchiveOverride struct {
 	Pos         Span
 	Module      label.Module
@@ -193,6 +229,11 @@ type ArchiveOverride struct {
 	Patches     []string
 	PatchCmds   []string
 	PatchStrip  int
+	// ExtraKwargs preserves any kwargs not represented by the typed
+	// fields above. Source order is preserved. Bazel itself accepts
+	// arbitrary kwargs here (forwarded to http_archive), so the
+	// set isn't closed.
+	ExtraKwargs []KwargEntry
 }
 
 func (o *ArchiveOverride) Span() Span               { return o.Pos }

@@ -47,8 +47,8 @@ type useExtRecorder struct {
 	returnErr error
 }
 
-func (r *useExtRecorder) UseExtension(_ string, _ label.ApparentLabel, _ label.StarlarkIdentifier, _, _ bool, tags []ExtensionTag) error {
-	for _, tag := range tags {
+func (r *useExtRecorder) UseExtension(u *UseExtension) error {
+	for _, tag := range u.Tags {
 		r.tags = append(r.tags, tag.Name)
 	}
 	return r.returnErr
@@ -61,53 +61,53 @@ type recordingHandler struct {
 	err   error // error to return from all methods
 }
 
-func (h *recordingHandler) Module(name label.Module, version label.Version, compatLevel int, repoName label.ApparentRepo, bazelCompatibility []string) error {
-	h.calls = append(h.calls, "Module:"+name.String())
+func (h *recordingHandler) Module(m *ModuleDecl) error {
+	h.calls = append(h.calls, "Module:"+m.Name.String())
 	return h.err
 }
 
-func (h *recordingHandler) BazelDep(name label.Module, version label.Version, maxCompat int, repoName label.ApparentRepo, devDep bool) error {
-	h.calls = append(h.calls, "BazelDep:"+name.String())
+func (h *recordingHandler) BazelDep(d *BazelDep) error {
+	h.calls = append(h.calls, "BazelDep:"+d.Name.String())
 	return h.err
 }
 
-func (h *recordingHandler) SingleVersionOverride(moduleName label.Module, version label.Version, registry string, patches, patchCmds []string, patchStrip int) error {
-	h.calls = append(h.calls, "SingleVersionOverride:"+moduleName.String())
+func (h *recordingHandler) SingleVersionOverride(o *SingleVersionOverride) error {
+	h.calls = append(h.calls, "SingleVersionOverride:"+o.Module.String())
 	return h.err
 }
 
-func (h *recordingHandler) GitOverride(moduleName label.Module, remote, commit, tag, branch string, patches, patchCmds []string, patchStrip int, initSubmodules bool, stripPrefix string) error {
-	h.calls = append(h.calls, "GitOverride:"+moduleName.String())
+func (h *recordingHandler) GitOverride(o *GitOverride) error {
+	h.calls = append(h.calls, "GitOverride:"+o.Module.String())
 	return h.err
 }
 
-func (h *recordingHandler) LocalPathOverride(moduleName label.Module, path string) error {
-	h.calls = append(h.calls, "LocalPathOverride:"+moduleName.String())
+func (h *recordingHandler) LocalPathOverride(o *LocalPathOverride) error {
+	h.calls = append(h.calls, "LocalPathOverride:"+o.Module.String())
 	return h.err
 }
 
-func (h *recordingHandler) ArchiveOverride(moduleName label.Module, urls []string, integrity, stripPrefix string, patches, patchCmds []string, patchStrip int) error {
-	h.calls = append(h.calls, "ArchiveOverride:"+moduleName.String())
+func (h *recordingHandler) ArchiveOverride(o *ArchiveOverride) error {
+	h.calls = append(h.calls, "ArchiveOverride:"+o.Module.String())
 	return h.err
 }
 
-func (h *recordingHandler) MultipleVersionOverride(moduleName label.Module, versions []label.Version, registry string) error {
-	h.calls = append(h.calls, "MultipleVersionOverride:"+moduleName.String())
+func (h *recordingHandler) MultipleVersionOverride(o *MultipleVersionOverride) error {
+	h.calls = append(h.calls, "MultipleVersionOverride:"+o.Module.String())
 	return h.err
 }
 
-func (h *recordingHandler) RegisterToolchains(patterns []string, devDep bool) error {
+func (h *recordingHandler) RegisterToolchains(r *RegisterToolchains) error {
 	h.calls = append(h.calls, "RegisterToolchains")
 	return h.err
 }
 
-func (h *recordingHandler) RegisterExecutionPlatforms(patterns []string, devDep bool) error {
+func (h *recordingHandler) RegisterExecutionPlatforms(r *RegisterExecutionPlatforms) error {
 	h.calls = append(h.calls, "RegisterExecutionPlatforms")
 	return h.err
 }
 
-func (h *recordingHandler) UnknownStatement(name string, pos Span) error {
-	h.calls = append(h.calls, "UnknownStatement:"+name)
+func (h *recordingHandler) UnknownStatement(u *UnknownStatement) error {
+	h.calls = append(h.calls, "UnknownStatement:"+u.FuncName)
 	return h.err
 }
 
@@ -381,51 +381,51 @@ func TestWalk_UseExtensionError(t *testing.T) {
 func TestBaseHandler_AllMethodsReturnNil(t *testing.T) {
 	h := &BaseHandler{}
 
-	if err := h.Module(label.MustModule("m"), label.MustVersion("1.0"), 0, mustApparentRepo(""), nil); err != nil {
+	if err := h.Module(&ModuleDecl{Name: label.MustModule("m"), Version: label.MustVersion("1.0")}); err != nil {
 		t.Errorf("Module returned error: %v", err)
 	}
 
-	if err := h.BazelDep(label.MustModule("d"), label.MustVersion("1.0"), 0, mustApparentRepo(""), false); err != nil {
+	if err := h.BazelDep(&BazelDep{Name: label.MustModule("d"), Version: label.MustVersion("1.0")}); err != nil {
 		t.Errorf("BazelDep returned error: %v", err)
 	}
 
-	if err := h.UseExtension("x", mustApparentLabel("@x//:x.bzl"), mustStarlarkIdentifier("x"), false, false, nil); err != nil {
+	if err := h.UseExtension(&UseExtension{ExtensionFile: mustApparentLabel("@x//:x.bzl"), ExtensionName: mustStarlarkIdentifier("x")}); err != nil {
 		t.Errorf("UseExtension returned error: %v", err)
 	}
 
-	if err := h.UseRepo("", []string{"repo"}, nil, false); err != nil {
+	if err := h.UseRepo(&UseRepo{Repos: []string{"repo"}}); err != nil {
 		t.Errorf("UseRepo returned error: %v", err)
 	}
 
-	if err := h.SingleVersionOverride(label.MustModule("m"), label.MustVersion("1.0"), "", nil, nil, 0); err != nil {
+	if err := h.SingleVersionOverride(&SingleVersionOverride{Module: label.MustModule("m"), Version: label.MustVersion("1.0")}); err != nil {
 		t.Errorf("SingleVersionOverride returned error: %v", err)
 	}
 
-	if err := h.MultipleVersionOverride(label.MustModule("m"), nil, ""); err != nil {
+	if err := h.MultipleVersionOverride(&MultipleVersionOverride{Module: label.MustModule("m")}); err != nil {
 		t.Errorf("MultipleVersionOverride returned error: %v", err)
 	}
 
-	if err := h.GitOverride(label.MustModule("m"), "", "", "", "", nil, nil, 0, false, ""); err != nil {
+	if err := h.GitOverride(&GitOverride{Module: label.MustModule("m")}); err != nil {
 		t.Errorf("GitOverride returned error: %v", err)
 	}
 
-	if err := h.ArchiveOverride(label.MustModule("m"), nil, "", "", nil, nil, 0); err != nil {
+	if err := h.ArchiveOverride(&ArchiveOverride{Module: label.MustModule("m")}); err != nil {
 		t.Errorf("ArchiveOverride returned error: %v", err)
 	}
 
-	if err := h.LocalPathOverride(label.MustModule("m"), ""); err != nil {
+	if err := h.LocalPathOverride(&LocalPathOverride{Module: label.MustModule("m")}); err != nil {
 		t.Errorf("LocalPathOverride returned error: %v", err)
 	}
 
-	if err := h.RegisterToolchains(nil, false); err != nil {
+	if err := h.RegisterToolchains(&RegisterToolchains{}); err != nil {
 		t.Errorf("RegisterToolchains returned error: %v", err)
 	}
 
-	if err := h.RegisterExecutionPlatforms(nil, false); err != nil {
+	if err := h.RegisterExecutionPlatforms(&RegisterExecutionPlatforms{}); err != nil {
 		t.Errorf("RegisterExecutionPlatforms returned error: %v", err)
 	}
 
-	if err := h.UnknownStatement("func", Span{}); err != nil {
+	if err := h.UnknownStatement(&UnknownStatement{FuncName: "func"}); err != nil {
 		t.Errorf("UnknownStatement returned error: %v", err)
 	}
 }
@@ -661,8 +661,8 @@ type useRepoHandler struct {
 	repos *[]string
 }
 
-func (h *useRepoHandler) UseRepo(_ string, repos []string, _ map[string]string, _ bool) error {
-	*h.repos = append(*h.repos, repos...)
+func (h *useRepoHandler) UseRepo(u *UseRepo) error {
+	*h.repos = append(*h.repos, u.Repos...)
 	return nil
 }
 
@@ -678,11 +678,11 @@ type useRepoLinkRecorder struct {
 	devs    []bool
 }
 
-func (h *useRepoLinkRecorder) UseRepo(extensionVariable string, repos []string, renames map[string]string, devDep bool) error {
-	h.extVars = append(h.extVars, extensionVariable)
-	h.repos = append(h.repos, repos)
-	h.renames = append(h.renames, renames)
-	h.devs = append(h.devs, devDep)
+func (h *useRepoLinkRecorder) UseRepo(u *UseRepo) error {
+	h.extVars = append(h.extVars, u.ExtensionVariable)
+	h.repos = append(h.repos, u.Repos)
+	h.renames = append(h.renames, u.Renames)
+	h.devs = append(h.devs, u.DevDependency)
 	return nil
 }
 
@@ -693,8 +693,8 @@ type includeRecorder struct {
 	labels []string
 }
 
-func (h *includeRecorder) Include(labelStr string, _ Span) error {
-	h.labels = append(h.labels, labelStr)
+func (h *includeRecorder) Include(i *Include) error {
+	h.labels = append(h.labels, i.Label)
 	return nil
 }
 

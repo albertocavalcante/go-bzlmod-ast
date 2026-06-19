@@ -297,7 +297,9 @@ func (p *Parser) parseBazelDep(call *build.CallExpr, pos Span) *BazelDep {
 	dep.MaxCompatibilityLevel = buildutil.Int(call, "max_compatibility_level")
 	dep.DevDependency = buildutil.Bool(call, "dev_dependency")
 
-	if repoName := buildutil.String(call, "repo_name"); repoName != "" {
+	if buildutil.IsNone(call, "repo_name") {
+		dep.IsNodepDep = true
+	} else if repoName := buildutil.String(call, "repo_name"); repoName != "" {
 		r, err := label.NewApparentRepo(repoName)
 		if err != nil {
 			p.addErrorf(pos.Start, "bazel_dep: invalid repo_name for %s: %v", name, err)
@@ -425,6 +427,23 @@ func (p *Parser) parseMultipleVersionOverride(call *build.CallExpr, pos Span) *M
 	return override
 }
 
+// gitOverrideKnownKwargs lists the kwargs that GitOverride captures as
+// typed fields. Any other kwarg is forwarded to git_repository by
+// Bazel; we preserve them in GitOverride.ExtraKwargs.
+var gitOverrideKnownKwargs = map[string]bool{
+	"module_name":     true,
+	"remote":          true,
+	"commit":          true,
+	"tag":             true,
+	"branch":          true,
+	"patches":         true,
+	"patch_cmds":      true,
+	"patch_strip":     true,
+	"init_submodules": true,
+	"strip_prefix":    true,
+	"verbose":         true,
+}
+
 func (p *Parser) parseGitOverride(call *build.CallExpr, pos Span) *GitOverride {
 	m, ok := p.parseRequiredModuleName(call, pos, "git_override")
 	if !ok {
@@ -443,7 +462,22 @@ func (p *Parser) parseGitOverride(call *build.CallExpr, pos Span) *GitOverride {
 		PatchStrip:     buildutil.Int(call, "patch_strip"),
 		InitSubmodules: buildutil.Bool(call, "init_submodules"),
 		StripPrefix:    buildutil.String(call, "strip_prefix"),
+		Verbose:        buildutil.Bool(call, "verbose"),
+		ExtraKwargs:    p.collectExtraKwargs(call, gitOverrideKnownKwargs),
 	}
+}
+
+// archiveOverrideKnownKwargs lists the kwargs that ArchiveOverride captures
+// as typed fields. Any other kwarg is forwarded to http_archive by Bazel;
+// we preserve them in ArchiveOverride.ExtraKwargs.
+var archiveOverrideKnownKwargs = map[string]bool{
+	"module_name":  true,
+	"urls":         true,
+	"integrity":    true,
+	"strip_prefix": true,
+	"patches":      true,
+	"patch_cmds":   true,
+	"patch_strip":  true,
 }
 
 func (p *Parser) parseArchiveOverride(call *build.CallExpr, pos Span) *ArchiveOverride {
@@ -461,7 +495,35 @@ func (p *Parser) parseArchiveOverride(call *build.CallExpr, pos Span) *ArchiveOv
 		Patches:     buildutil.StringList(call, "patches"),
 		PatchCmds:   buildutil.StringList(call, "patch_cmds"),
 		PatchStrip:  buildutil.Int(call, "patch_strip"),
+		ExtraKwargs: p.collectExtraKwargs(call, archiveOverrideKnownKwargs),
 	}
+}
+
+// collectExtraKwargs returns every named kwarg in the call that isn't
+// in the known set, in source order. Use this for directives like
+// git_override / archive_override that Bazel forwards as open kwargs
+// to underlying repo rules.
+func (p *Parser) collectExtraKwargs(call *build.CallExpr, known map[string]bool) []KwargEntry {
+	var out []KwargEntry
+	for _, arg := range call.List {
+		assign, ok := arg.(*build.AssignExpr)
+		if !ok {
+			continue
+		}
+		lhs, ok := assign.LHS.(*build.Ident)
+		if !ok {
+			continue
+		}
+		if known[lhs.Name] {
+			continue
+		}
+		out = append(out, KwargEntry{
+			Pos:   p.span(assign),
+			Name:  lhs.Name,
+			Value: buildutil.ExtractValue(assign.RHS),
+		})
+	}
+	return out
 }
 
 func (p *Parser) parseLocalPathOverride(call *build.CallExpr, pos Span) *LocalPathOverride {
