@@ -1,57 +1,100 @@
 package ast
 
-// AttrSpec describes a single attribute of a MODULE.bazel directive
-// and the Bazel-version lifecycle metadata we know about it.
+import (
+	"strconv"
+	"strings"
+)
+
+// AttrSpec describes a single attribute of a MODULE.bazel directive and
+// its Bazel-version lifecycle metadata.
 //
-// All version strings are Bazel semver (e.g. "7.0.0"). Sentinel values:
+// # Why per-major slices
 //
-//   - "" in AddedIn means "available since bzlmod was introduced".
-//   - "" in DeprecatedIn means "not documented as deprecated".
-//   - "" in NoopSince means "still functional in Bazel HEAD".
-//   - "HEAD" in DeprecatedIn / NoopSince means "the field IS deprecated /
-//     a no-op as of Bazel HEAD, but the exact version when this changed
-//     hasn't been backfilled yet." Callers should treat HEAD as "true at
-//     all observed versions".
+// Bazel ships parallel LTS lines. A deprecation can land in one branch
+// before another: compatibility_level became a no-op in 8.6.0
+// (2026-02-26) BEFORE the forward-port to 9.1.0 (2026-04-20), even
+// though 9.0.0 was already released (2026-01-20). A flat "deprecated
+// since X.Y.Z" doesn't model this -- a user running 9.0.0 was on a
+// pre-deprecation build despite 8.6.0 being out.
 //
-// Source of truth: src/main/java/com/google/devtools/build/lib/bazel/bzlmod/
-// ModuleFileGlobals.java in bazelbuild/bazel. Refresh this table when a
-// new Bazel release changes a directive surface.
+// DeprecatedIn and NoopSince therefore record one entry per major LTS
+// branch: the FIRST version on that branch where the attribute reached
+// that lifecycle stage. Missing major = the branch never saw the
+// transition.
+//
+// All version strings are Bazel semver in major.minor.patch form.
+// AddedIn is a single string (introductions don't bifurcate across
+// branches in the same way; we use the earliest in-scope release).
+//
+// Sentinels:
+//
+//   - AddedIn=="" -> "available since the first Bazel release in scope".
+//   - nil/empty DeprecatedIn -> "not deprecated in any in-scope branch".
+//   - nil/empty NoopSince    -> "still functional in every in-scope branch".
+//
+// # Scope
+//
+// As of June 2026 the in-scope Bazel releases are 7.x, 8.x, and 9.x.
+// Bazel 5.x and 6.x are explicitly EOL per the upstream release model
+// (https://bazel.build/release) and are NOT covered. AddedIn=""
+// therefore means "available in 7.0.0 onward". Prune 7.x entries once
+// it leaves Maintenance (scheduled Dec 2026).
+//
+// # Source of truth
+//
+// Per-attribute data comes from reading
+// src/main/java/com/google/devtools/build/lib/bazel/bzlmod/
+// ModuleFileGlobals.java at each relevant Bazel release tag. Refresh
+// when a new Bazel minor or LTS lands.
 type AttrSpec struct {
 	Name         string
 	Doc          string
 	AddedIn      string
-	DeprecatedIn string
-	NoopSince    string
+	DeprecatedIn []string
+	NoopSince    []string
 }
 
 // ModuleAttrs returns the canonical attribute spec for module().
+//
 // Reference: ModuleFileGlobals.java @StarlarkMethod(name = "module").
+// Lifecycle anchors:
+//
+//   - compatibility_level was a functional field from 7.0.0 through
+//     8.5.x and 9.0.x. It was deprecated and made a no-op in 8.6.0
+//     (2026-02-26) and forward-ported to 9.1.0 (2026-04-20).
 func ModuleAttrs() []AttrSpec {
 	return []AttrSpec{
 		{Name: "name", Doc: "Module name. Required for non-root modules."},
 		{Name: "version", Doc: "Module version. Required for non-root modules."},
 		{
 			Name:         "compatibility_level",
-			Doc:          "Originally meant for breaking-change tracking. Deprecated no-op at HEAD.",
-			DeprecatedIn: "HEAD",
-			NoopSince:    "HEAD",
+			Doc:          "Originally tracked breaking changes. Deprecated no-op since 8.6.0 / 9.1.0.",
+			DeprecatedIn: []string{"8.6.0", "9.1.0"},
+			NoopSince:    []string{"8.6.0", "9.1.0"},
 		},
 		{Name: "repo_name", Doc: "Override the repo name representing this module."},
-		{Name: "bazel_compatibility", Doc: "Allowed Bazel versions, e.g. '>=7.0.0'. Informational, does not affect resolution."},
+		{Name: "bazel_compatibility", Doc: "Allowed Bazel versions (e.g. \">=7.0.0\"). Informational; does not affect resolution."},
 	}
 }
 
 // BazelDepAttrs returns the canonical attribute spec for bazel_dep().
+//
 // Reference: ModuleFileGlobals.java @StarlarkMethod(name = "bazel_dep").
+// Lifecycle anchors:
+//
+//   - max_compatibility_level paired with compatibility_level and shared
+//     its lifecycle: functional through 8.5.x / 9.0.x, deprecated no-op
+//     starting at 8.6.0 (2026-02-26), forward-ported to 9.1.0
+//     (2026-04-20).
 func BazelDepAttrs() []AttrSpec {
 	return []AttrSpec{
 		{Name: "name", Doc: "Module name to depend on. Required."},
 		{Name: "version", Doc: "Minimum required version."},
 		{
 			Name:         "max_compatibility_level",
-			Doc:          "Used to cap compatibility_level. Deprecated no-op at HEAD now that compatibility_level itself is a no-op.",
-			DeprecatedIn: "HEAD",
-			NoopSince:    "HEAD",
+			Doc:          "Capped compatibility_level for the resolved version. Deprecated no-op since 8.6.0 / 9.1.0.",
+			DeprecatedIn: []string{"8.6.0", "9.1.0"},
+			NoopSince:    []string{"8.6.0", "9.1.0"},
 		},
 		{Name: "repo_name", Doc: "Apparent repo name to expose this dep under. Pass repo_name=None to mark as a nodep dependency."},
 		{Name: "dev_dependency", Doc: "True if only needed in dev/test contexts."},
@@ -84,7 +127,7 @@ func MultipleVersionOverrideAttrs() []AttrSpec {
 }
 
 // GitOverrideAttrs returns the commonly-used attribute spec for
-// git_override(). NOTE: Bazel uses extraKeywords for git_override —
+// git_override(). NOTE: Bazel uses extraKeywords for git_override --
 // all kwargs except module_name are forwarded to the underlying
 // git_repository repo rule. The set listed here covers the typed
 // fields on ast.GitOverride; anything else lands in ExtraKwargs.
@@ -107,7 +150,7 @@ func GitOverrideAttrs() []AttrSpec {
 
 // ArchiveOverrideAttrs returns the commonly-used attribute spec for
 // archive_override(). NOTE: Bazel uses extraKeywords for
-// archive_override — all kwargs except module_name are forwarded to
+// archive_override -- all kwargs except module_name are forwarded to
 // the underlying http_archive repo rule. The set listed here covers
 // the typed fields on ast.ArchiveOverride; anything else lands in
 // ExtraKwargs. Reference: ModuleFileGlobals.java @StarlarkMethod(name
@@ -161,24 +204,107 @@ func LookupAttr(directive, attr string) (AttrSpec, bool) {
 	return AttrSpec{}, false
 }
 
-// IsDeprecatedAtHead reports whether the attribute of the given
-// directive is documented as deprecated in Bazel HEAD. This is the
-// safest query when the caller does not know its target Bazel version
-// or only cares about current-state advice.
+// IsDeprecatedAt reports whether the attribute of the given directive
+// is documented as deprecated for the supplied Bazel version. Resolution
+// is per-major-branch: a 9.0.0 query matches the entry on the 9.x branch
+// (if any), not whichever entry has the smallest version string. Returns
+// false for unknown directive/attr and for attrs that have never been
+// deprecated on the queried major branch.
+//
+// bazelVersion is in major.minor.patch form (e.g. "8.5.0"). Malformed
+// input parses as (0,0,0), which is older than any real Bazel and so
+// returns false unless the attribute was deprecated on the (nonexistent)
+// 0.x branch.
+func IsDeprecatedAt(directive, attr, bazelVersion string) bool {
+	s, ok := LookupAttr(directive, attr)
+	if !ok {
+		return false
+	}
+	return reachedStageAt(s.DeprecatedIn, bazelVersion)
+}
+
+// IsNoopAt reports whether the attribute of the given directive is
+// documented as a no-op for the supplied Bazel version. Same per-major
+// semantics as IsDeprecatedAt.
+func IsNoopAt(directive, attr, bazelVersion string) bool {
+	s, ok := LookupAttr(directive, attr)
+	if !ok {
+		return false
+	}
+	return reachedStageAt(s.NoopSince, bazelVersion)
+}
+
+// IsDeprecatedAtHead is the policy-free query: "is this attribute
+// deprecated in any in-scope release branch?". Useful for tools that
+// don't pin a target Bazel version.
 func IsDeprecatedAtHead(directive, attr string) bool {
 	s, ok := LookupAttr(directive, attr)
 	if !ok {
 		return false
 	}
-	return s.DeprecatedIn != ""
+	return len(s.DeprecatedIn) > 0
 }
 
-// IsNoopAtHead reports whether the attribute of the given directive
-// is documented as a no-op in Bazel HEAD.
+// IsNoopAtHead is the policy-free counterpart for no-op status.
 func IsNoopAtHead(directive, attr string) bool {
 	s, ok := LookupAttr(directive, attr)
 	if !ok {
 		return false
 	}
-	return s.NoopSince != ""
+	return len(s.NoopSince) > 0
+}
+
+// reachedStageAt is the shared per-major-branch comparator. It picks
+// the entry in stage whose major matches bazelVersion's major and
+// reports whether bazelVersion >= that entry. Missing entry = the
+// queried branch never reached this stage -> false.
+func reachedStageAt(stage []string, bazelVersion string) bool {
+	target := parseSemver3(bazelVersion)
+	for _, v := range stage {
+		entry := parseSemver3(v)
+		if entry[0] != target[0] {
+			continue
+		}
+		return compareSemverParts(target, entry) >= 0
+	}
+	return false
+}
+
+// compareSemver returns -1, 0, or +1 ordering a against b under simple
+// major.minor.patch semantics. Pre-release suffixes ("-rc1", "+build")
+// are ignored, matching how Bazel tags releases. An unparsable component
+// is treated as 0, so malformed input compares as the smallest version.
+func compareSemver(a, b string) int {
+	return compareSemverParts(parseSemver3(a), parseSemver3(b))
+}
+
+func compareSemverParts(a, b [3]int) int {
+	for i := range 3 {
+		if a[i] < b[i] {
+			return -1
+		}
+		if a[i] > b[i] {
+			return 1
+		}
+	}
+	return 0
+}
+
+func parseSemver3(v string) [3]int {
+	if i := strings.IndexAny(v, "-+"); i >= 0 {
+		v = v[:i]
+	}
+	parts := strings.SplitN(v, ".", 3)
+	var out [3]int
+	for i := range 3 {
+		if i >= len(parts) {
+			break
+		}
+		n, err := strconv.Atoi(parts[i])
+		if err != nil {
+			continue
+		}
+		out[i] = n
+	}
+	return out
 }

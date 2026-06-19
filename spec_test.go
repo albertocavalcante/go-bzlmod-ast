@@ -7,11 +7,11 @@ func TestLookupAttr_Known(t *testing.T) {
 	if !ok {
 		t.Fatal("LookupAttr(bazel_dep, max_compatibility_level) returned not-ok")
 	}
-	if s.DeprecatedIn == "" {
-		t.Errorf("max_compatibility_level should be marked deprecated; got DeprecatedIn=%q", s.DeprecatedIn)
+	if len(s.DeprecatedIn) == 0 {
+		t.Errorf("max_compatibility_level should be marked deprecated; got empty DeprecatedIn")
 	}
-	if s.NoopSince == "" {
-		t.Errorf("max_compatibility_level should be marked noop; got NoopSince=%q", s.NoopSince)
+	if len(s.NoopSince) == 0 {
+		t.Errorf("max_compatibility_level should be marked noop; got empty NoopSince")
 	}
 }
 
@@ -45,6 +45,69 @@ func TestIsNoopAtHead(t *testing.T) {
 	}
 	if IsNoopAtHead("bazel_dep", "version") {
 		t.Error("bazel_dep.version should not be noop")
+	}
+}
+
+// TestIsDeprecatedAt_VersionBoundaries pins the per-version semantics:
+// compatibility_level / max_compatibility_level deprecation FIRST
+// shipped in 8.6.0 (2026-02-26) and was forward-ported to 9.1.0
+// (2026-04-20). Bazel 7.x never saw the deprecation. 8.5.x and 9.0.x
+// were still pre-deprecation.
+func TestIsDeprecatedAt_VersionBoundaries(t *testing.T) {
+	cases := []struct {
+		bazel string
+		want  bool
+	}{
+		{"7.0.0", false},
+		{"7.7.1", false}, // last 7.x release; never deprecated
+		{"8.0.0", false},
+		{"8.5.1", false}, // pre-deprecation 8.x
+		{"8.6.0", true},  // first version where it ships
+		{"8.7.0", true},
+		{"9.0.0", false}, // 9.0.x predates the forward-port
+		{"9.0.2", false},
+		{"9.1.0", true}, // forward-port lands here
+		{"9.1.1", true},
+	}
+	for _, tc := range cases {
+		if got := IsDeprecatedAt("module", "compatibility_level", tc.bazel); got != tc.want {
+			t.Errorf("IsDeprecatedAt(module.compatibility_level, %q) = %v, want %v", tc.bazel, got, tc.want)
+		}
+		if got := IsDeprecatedAt("bazel_dep", "max_compatibility_level", tc.bazel); got != tc.want {
+			t.Errorf("IsDeprecatedAt(bazel_dep.max_compatibility_level, %q) = %v, want %v", tc.bazel, got, tc.want)
+		}
+		if got := IsNoopAt("module", "compatibility_level", tc.bazel); got != tc.want {
+			t.Errorf("IsNoopAt(module.compatibility_level, %q) = %v, want %v", tc.bazel, got, tc.want)
+		}
+	}
+}
+
+func TestIsDeprecatedAt_UnknownReturnsFalse(t *testing.T) {
+	if IsDeprecatedAt("bazel_dep", "name", "9.1.1") {
+		t.Error("bazel_dep.name should not be deprecated at any version")
+	}
+	if IsDeprecatedAt("unknown_directive", "anything", "9.0.0") {
+		t.Error("unknown directive should return false")
+	}
+}
+
+func TestCompareSemver(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want int
+	}{
+		{"7.0.0", "7.0.0", 0},
+		{"7.0.0", "8.0.0", -1},
+		{"9.1.0", "9.0.99", 1},
+		{"8.6.0", "8.5.9", 1},
+		{"8.6.0-rc1", "8.6.0", 0}, // pre-release suffix stripped
+		{"9.1.0+build.42", "9.1.0", 0},
+		{"garbage", "1.0.0", -1}, // unparsable -> zero -> smallest
+	}
+	for _, tc := range cases {
+		if got := compareSemver(tc.a, tc.b); got != tc.want {
+			t.Errorf("compareSemver(%q, %q) = %d, want %d", tc.a, tc.b, got, tc.want)
+		}
 	}
 }
 
