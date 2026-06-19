@@ -10,33 +10,69 @@ import (
 //
 // # Why per-major slices
 //
-// Bazel ships parallel LTS lines. A deprecation can land in one branch
-// before another: compatibility_level became a no-op in 8.6.0
-// (2026-02-26) BEFORE the forward-port to 9.1.0 (2026-04-20), even
-// though 9.0.0 was already released (2026-01-20). A flat "deprecated
-// since X.Y.Z" doesn't model this -- a user running 9.0.0 was on a
-// pre-deprecation build despite 8.6.0 being out.
+// Bazel ships parallel LTS lines (7.x, 8.x, 9.x ...). The Bazel team
+// frequently cherry-picks changes across branches at independent
+// cadences, so any given lifecycle transition can land at different
+// version numbers on different majors -- and may never land at all on
+// some of them. Examples:
 //
-// DeprecatedIn and NoopSince therefore record one entry per major LTS
-// branch: the FIRST version on that branch where the attribute reached
-// that lifecycle stage. Missing major = the branch never saw the
-// transition.
+//   - A change first written for 9.2.0 may be backported to 8.7.0 the
+//     same week. A user on 8.7.0 sees the new behavior; a user on
+//     8.6.x or 9.1.x does NOT.
+//   - A breaking change in 9.2.0 leaves users on 9.0.1 untouched, since
+//     9.0.x predates 9.2.0 and no 9.0.x patch release backports it.
+//   - A deprecation can ship to one branch and never to another. Bazel
+//     7.x will simply EOL in Dec 2026 without ever receiving the
+//     compatibility_level deprecation, even though it shipped to 8.x in
+//     8.6.0 and 9.x in 9.1.0.
 //
-// All version strings are Bazel semver in major.minor.patch form.
-// AddedIn is a single string (introductions don't bifurcate across
-// branches in the same way; we use the earliest in-scope release).
+// A flat "transitioned at X.Y.Z" model collapses all this into a
+// single point and gets every query above wrong. Instead, each
+// lifecycle field (AddedIn, DeprecatedIn, NoopSince, RemovedIn) is a
+// SLICE: one entry per major LTS branch where the transition landed,
+// holding the FIRST version on that branch where it took effect.
 //
-// Sentinels:
+// # Encoding invariants
 //
-//   - AddedIn=="" -> "available since the first Bazel release in scope".
-//   - nil/empty DeprecatedIn -> "not deprecated in any in-scope branch".
-//   - nil/empty NoopSince    -> "still functional in every in-scope branch".
+// Each lifecycle slice MUST obey:
+//
+//   1. At most one entry per major. If the transition reaches a branch,
+//      one entry records the earliest version on that branch where it
+//      took effect; subsequent patches inherit the state.
+//   2. Each entry is parseable as major.minor.patch (pre-release and
+//      build suffixes are tolerated but ignored).
+//   3. A nil/empty slice means the transition has not landed on ANY
+//      in-scope branch. Use this when the attribute is still in its
+//      prior state everywhere we track.
+//
+// Examples:
+//
+//   DeprecatedIn: ["8.6.0", "9.1.0"]     -> deprecated since 8.6.0 on 8.x,
+//                                          since 9.1.0 on 9.x, never on 7.x.
+//   DeprecatedIn: nil                    -> not deprecated anywhere in scope.
+//   AddedIn:      ["8.7.0", "9.2.0"]     -> backported new kwarg; 8.7.0+ on
+//                                          8.x, 9.2.0+ on 9.x.
+//   RemovedIn:    ["9.5.0"]              -> deleted on 9.x in 9.5.0; still
+//                                          present on 8.x.
+//
+// # Query semantics
+//
+// IsAvailableAt / IsDeprecatedAt / IsNoopAt / IsRemovedAt each match
+// the target version's MAJOR against the slice. If no entry for that
+// major exists, the transition hasn't reached the queried branch ->
+// the function returns false. If an entry exists, the function returns
+// (target >= entry) under major.minor.patch comparison.
+//
+// IsAvailableAt is the most useful composite: an attribute is
+// "available" iff its AddedIn check passes (or AddedIn is empty -> the
+// attribute was always present in the in-scope range) AND its
+// RemovedIn check has NOT been reached.
 //
 // # Scope
 //
 // As of June 2026 the in-scope Bazel releases are 7.x, 8.x, and 9.x.
 // Bazel 5.x and 6.x are explicitly EOL per the upstream release model
-// (https://bazel.build/release) and are NOT covered. AddedIn=""
+// (https://bazel.build/release) and are NOT covered. AddedIn=nil
 // therefore means "available in 7.0.0 onward". Prune 7.x entries once
 // it leaves Maintenance (scheduled Dec 2026).
 //
@@ -45,13 +81,16 @@ import (
 // Per-attribute data comes from reading
 // src/main/java/com/google/devtools/build/lib/bazel/bzlmod/
 // ModuleFileGlobals.java at each relevant Bazel release tag. Refresh
-// when a new Bazel minor or LTS lands.
+// when a new Bazel minor or LTS lands -- crucially, check ALL active
+// LTS branches because cherry-picks happen on a different cadence than
+// the master release.
 type AttrSpec struct {
 	Name         string
 	Doc          string
-	AddedIn      string
+	AddedIn      []string
 	DeprecatedIn []string
 	NoopSince    []string
+	RemovedIn    []string
 }
 
 // ModuleAttrs returns the canonical attribute spec for module().
@@ -204,6 +243,31 @@ func LookupAttr(directive, attr string) (AttrSpec, bool) {
 	return AttrSpec{}, false
 }
 
+// IsAvailableAt reports whether the attribute is documented as present
+// for the supplied Bazel version. An attribute is considered available
+// when:
+//
+//   - AddedIn is empty (the attribute has been part of the directive
+//     for the whole in-scope range), OR an AddedIn entry exists for
+//     the queried major and the queried patch >= that entry, AND
+//   - no RemovedIn entry has been reached on the queried major.
+//
+// Returns false for unknown directive/attr.
+func IsAvailableAt(directive, attr, bazelVersion string) bool {
+	s, ok := LookupAttr(directive, attr)
+	if !ok {
+		return false
+	}
+	added := len(s.AddedIn) == 0 || reachedStageAt(s.AddedIn, bazelVersion)
+	if !added {
+		return false
+	}
+	if reachedStageAt(s.RemovedIn, bazelVersion) {
+		return false
+	}
+	return true
+}
+
 // IsDeprecatedAt reports whether the attribute of the given directive
 // is documented as deprecated for the supplied Bazel version. Resolution
 // is per-major-branch: a 9.0.0 query matches the entry on the 9.x branch
@@ -234,6 +298,18 @@ func IsNoopAt(directive, attr, bazelVersion string) bool {
 	return reachedStageAt(s.NoopSince, bazelVersion)
 }
 
+// IsRemovedAt reports whether the attribute is documented as removed
+// for the supplied Bazel version (gone from the directive surface;
+// passing it would be a Starlark evaluation error). Same per-major
+// semantics as IsDeprecatedAt.
+func IsRemovedAt(directive, attr, bazelVersion string) bool {
+	s, ok := LookupAttr(directive, attr)
+	if !ok {
+		return false
+	}
+	return reachedStageAt(s.RemovedIn, bazelVersion)
+}
+
 // IsDeprecatedAtHead is the policy-free query: "is this attribute
 // deprecated in any in-scope release branch?". Useful for tools that
 // don't pin a target Bazel version.
@@ -254,10 +330,23 @@ func IsNoopAtHead(directive, attr string) bool {
 	return len(s.NoopSince) > 0
 }
 
+// IsRemovedAtHead reports whether the attribute is documented as
+// removed on any in-scope branch.
+func IsRemovedAtHead(directive, attr string) bool {
+	s, ok := LookupAttr(directive, attr)
+	if !ok {
+		return false
+	}
+	return len(s.RemovedIn) > 0
+}
+
 // reachedStageAt is the shared per-major-branch comparator. It picks
 // the entry in stage whose major matches bazelVersion's major and
 // reports whether bazelVersion >= that entry. Missing entry = the
 // queried branch never reached this stage -> false.
+//
+// Invariant: stage has at most one entry per major. The first match
+// wins; multiple entries with the same major are a malformed spec.
 func reachedStageAt(stage []string, bazelVersion string) bool {
 	target := parseSemver3(bazelVersion)
 	for _, v := range stage {

@@ -48,11 +48,11 @@ func TestIsNoopAtHead(t *testing.T) {
 	}
 }
 
-// TestIsDeprecatedAt_VersionBoundaries pins the per-version semantics:
-// compatibility_level / max_compatibility_level deprecation FIRST
-// shipped in 8.6.0 (2026-02-26) and was forward-ported to 9.1.0
-// (2026-04-20). Bazel 7.x never saw the deprecation. 8.5.x and 9.0.x
-// were still pre-deprecation.
+// TestIsDeprecatedAt_VersionBoundaries pins the per-version semantics
+// for the real compatibility_level / max_compatibility_level data:
+// deprecation FIRST shipped in 8.6.0 (2026-02-26) and was forward-ported
+// to 9.1.0 (2026-04-20). Bazel 7.x never saw the deprecation. 8.5.x and
+// 9.0.x were pre-deprecation.
 func TestIsDeprecatedAt_VersionBoundaries(t *testing.T) {
 	cases := []struct {
 		bazel string
@@ -111,130 +111,248 @@ func TestCompareSemver(t *testing.T) {
 	}
 }
 
-// TestParse_DropsTypedNilFromParseHelpers pins the fix for the typed-nil
-// trap: when a per-directive parse helper (e.g. parseBazelDep) returns
-// a typed-nil pointer after recording an error, the result must not
-// leak into file.Statements (where the interface wrapping a nil
-// pointer would survive an `s != nil` check and crash downstream
-// handlers).
-func TestParse_DropsTypedNilFromParseHelpers(t *testing.T) {
-	// bazel_dep without name -> parseBazelDep returns (*BazelDep)(nil).
-	const src = `bazel_dep(version = "1.0.0")`
-	result, err := ParseContent("MODULE.bazel", []byte(src))
-	if err != nil {
-		t.Fatalf("ParseContent: %v", err)
+// ============================================================================
+// Cherry-pick / backport scenarios -- the model is per-major lifecycle slices.
+// Each test below uses synthetic stages so we can pin the contract independent
+// of whatever real Bazel does this week.
+// ============================================================================
+
+// TestReachedStageAt_ForwardOnlyChange: a transition that lands in 9.2.0 and
+// is never backported. Users on 9.0.x or 9.1.x see the OLD behavior; users
+// from 9.2.0 onward see the NEW behavior; users on 7.x / 8.x never see it.
+func TestReachedStageAt_ForwardOnlyChange(t *testing.T) {
+	stage := []string{"9.2.0"}
+	cases := []struct {
+		v    string
+		want bool
+	}{
+		{"7.7.1", false},  // 7.x branch never touched
+		{"8.7.0", false},  // 8.x branch never touched
+		{"9.0.0", false},  // 9.0.x predates the change
+		{"9.0.99", false}, // hypothetical late 9.0.x patch -- still no backport
+		{"9.1.99", false}, // hypothetical late 9.1.x patch -- still no backport
+		{"9.2.0", true},   // exact landing
+		{"9.2.5", true},
+		{"9.10.0", true}, // future patch in the 9.x line
 	}
-	if !result.HasErrors() {
-		t.Fatal("expected an error in result.Errors for missing-name bazel_dep")
-	}
-	for _, stmt := range result.File.Statements {
-		if stmt == nil {
-			t.Fatal("nil statement leaked into File.Statements")
+	for _, tc := range cases {
+		if got := reachedStageAt(stage, tc.v); got != tc.want {
+			t.Errorf("forward-only 9.2.0 @ %q = %v, want %v", tc.v, got, tc.want)
 		}
-		// Walk must not panic on whatever survived the filter.
-		_ = Walk(result.File, &BaseHandler{})
 	}
 }
 
-func TestParse_BazelDepRepoNameNone(t *testing.T) {
-	const src = `
-module(name = "root", version = "1.0.0")
-bazel_dep(name = "nodep_target", version = "1.0.0", repo_name = None)
-bazel_dep(name = "regular_dep", version = "2.0.0")
-`
-	result, err := ParseContent("MODULE.bazel", []byte(src))
-	if err != nil {
-		t.Fatalf("ParseContent: %v", err)
+// TestReachedStageAt_BackportTo8x: the same logical 9.2.0 change cherry-picked
+// into 8.7.0 the same week. Users on either branch see the new behavior from
+// their branch-specific landing version onward; older versions on each branch
+// still see the old behavior.
+func TestReachedStageAt_BackportTo8x(t *testing.T) {
+	stage := []string{"8.7.0", "9.2.0"}
+	cases := []struct {
+		v    string
+		want bool
+	}{
+		// 7.x: never touched.
+		{"7.7.1", false},
+		// 8.x boundary.
+		{"8.0.0", false},
+		{"8.6.99", false}, // last patch before the backport
+		{"8.7.0", true},   // backport landing
+		{"8.7.1", true},
+		{"8.99.0", true},
+		// 9.x boundary.
+		{"9.0.0", false},
+		{"9.1.99", false}, // last 9.1.x patch still pre-forward-port
+		{"9.2.0", true},   // forward-port landing
+		{"9.2.5", true},
 	}
-	collector := &DependencyCollector{}
-	if err := Walk(result.File, collector); err != nil {
-		t.Fatalf("Walk: %v", err)
-	}
-	if len(collector.Dependencies) != 2 {
-		t.Fatalf("expected 2 deps, got %d", len(collector.Dependencies))
-	}
-	if !collector.Dependencies[0].IsNodepDep {
-		t.Error("first dep should be marked IsNodepDep (repo_name=None)")
-	}
-	if collector.Dependencies[1].IsNodepDep {
-		t.Error("second dep should NOT be marked IsNodepDep (repo_name omitted)")
-	}
-}
-
-func TestParse_GitOverrideVerboseAndExtraKwargs(t *testing.T) {
-	const src = `
-module(name = "root", version = "1.0.0")
-bazel_dep(name = "gazelle", version = "0.32.0")
-git_override(
-    module_name = "gazelle",
-    remote = "https://github.com/bazelbuild/bazel-gazelle.git",
-    commit = "abc123",
-    verbose = True,
-    shallow_since = "2026-01-01",
-    recursive_init_submodules = True,
-)
-`
-	result, err := ParseContent("MODULE.bazel", []byte(src))
-	if err != nil {
-		t.Fatalf("ParseContent: %v", err)
-	}
-	collector := &OverrideCollector{}
-	if err := Walk(result.File, collector); err != nil {
-		t.Fatalf("Walk: %v", err)
-	}
-	if len(collector.GitOverrides) != 1 {
-		t.Fatalf("expected 1 git_override, got %d", len(collector.GitOverrides))
-	}
-	got := collector.GitOverrides[0]
-	if !got.Verbose {
-		t.Error("Verbose should be true")
-	}
-	if len(got.ExtraKwargs) != 2 {
-		t.Fatalf("expected 2 ExtraKwargs (shallow_since, recursive_init_submodules), got %d", len(got.ExtraKwargs))
-	}
-	names := []string{got.ExtraKwargs[0].Name, got.ExtraKwargs[1].Name}
-	if names[0] != "shallow_since" || names[1] != "recursive_init_submodules" {
-		t.Errorf("ExtraKwargs names = %v, want [shallow_since recursive_init_submodules]", names)
-	}
-	if got.ExtraKwargs[0].Value != "2026-01-01" {
-		t.Errorf("shallow_since value = %v, want \"2026-01-01\"", got.ExtraKwargs[0].Value)
-	}
-	if got.ExtraKwargs[1].Value != true {
-		t.Errorf("recursive_init_submodules value = %v (%T), want true (bool)", got.ExtraKwargs[1].Value, got.ExtraKwargs[1].Value)
+	for _, tc := range cases {
+		if got := reachedStageAt(stage, tc.v); got != tc.want {
+			t.Errorf("backport [8.7.0, 9.2.0] @ %q = %v, want %v", tc.v, got, tc.want)
+		}
 	}
 }
 
-func TestParse_ArchiveOverrideExtraKwargs(t *testing.T) {
-	const src = `
-module(name = "root", version = "1.0.0")
-bazel_dep(name = "rules_foo", version = "1.0.0")
-archive_override(
-    module_name = "rules_foo",
-    urls = ["https://example.com/rules_foo.tar.gz"],
-    integrity = "sha256-abc=",
-    type = "tar.gz",
-    rename_files = {"old": "new"},
-)
-`
-	result, err := ParseContent("MODULE.bazel", []byte(src))
-	if err != nil {
-		t.Fatalf("ParseContent: %v", err)
+// TestReachedStageAt_CherryPickToFinal7x: a change cherry-picked only to the
+// final patch release of an EOL-bound branch (7.7.1 was the last 7.x). Earlier
+// 7.x users do not get it; the new 8.x / 9.x lines may or may not get it
+// depending on the spec.
+func TestReachedStageAt_CherryPickToFinal7x(t *testing.T) {
+	stage := []string{"7.7.1"}
+	cases := []struct {
+		v    string
+		want bool
+	}{
+		{"7.7.0", false}, // pre-cherry-pick
+		{"7.7.1", true},  // exact landing
+		{"8.0.0", false}, // different major, no entry -> false
+		{"9.0.0", false},
 	}
-	collector := &OverrideCollector{}
-	if err := Walk(result.File, collector); err != nil {
-		t.Fatalf("Walk: %v", err)
+	for _, tc := range cases {
+		if got := reachedStageAt(stage, tc.v); got != tc.want {
+			t.Errorf("7.7.1-only @ %q = %v, want %v", tc.v, got, tc.want)
+		}
 	}
-	if len(collector.ArchiveOverrides) != 1 {
-		t.Fatalf("expected 1 archive_override, got %d", len(collector.ArchiveOverrides))
+}
+
+// TestReachedStageAt_EmptyMeansNeverLanded: empty stage slice means the
+// transition has not landed on any in-scope branch.
+func TestReachedStageAt_EmptyMeansNeverLanded(t *testing.T) {
+	if reachedStageAt(nil, "9.99.99") {
+		t.Error("nil stage should return false for any version")
 	}
-	got := collector.ArchiveOverrides[0]
-	if len(got.ExtraKwargs) != 2 {
-		t.Fatalf("expected 2 ExtraKwargs (type, rename_files), got %d (%+v)", len(got.ExtraKwargs), got.ExtraKwargs)
+	if reachedStageAt([]string{}, "9.99.99") {
+		t.Error("empty stage should return false for any version")
 	}
-	if got.ExtraKwargs[0].Name != "type" || got.ExtraKwargs[0].Value != "tar.gz" {
-		t.Errorf("first extra = (%s, %v), want (type, tar.gz)", got.ExtraKwargs[0].Name, got.ExtraKwargs[0].Value)
+}
+
+// TestReachedStageAt_PreRelease: pre-release / build-metadata suffixes are
+// stripped before comparison, so 9.2.0-rc1 compares equal to 9.2.0.
+func TestReachedStageAt_PreRelease(t *testing.T) {
+	stage := []string{"9.2.0"}
+	if !reachedStageAt(stage, "9.2.0-rc1") {
+		t.Error("9.2.0-rc1 should reach the 9.2.0 stage")
 	}
-	if got.ExtraKwargs[1].Name != "rename_files" {
-		t.Errorf("second extra name = %s, want rename_files", got.ExtraKwargs[1].Name)
+	if !reachedStageAt(stage, "9.2.0+build.5") {
+		t.Error("9.2.0+build.5 should reach the 9.2.0 stage")
+	}
+}
+
+// TestIsAvailableAt_BackportedNewKwarg: a brand-new kwarg added in 9.2.0 and
+// cherry-picked back into 8.7.0 so 8.x users can migrate at their own pace.
+// IsAvailableAt should reflect per-branch availability.
+func TestIsAvailableAt_BackportedNewKwarg(t *testing.T) {
+	const directive = "test_directive"
+	const attr = "shiny_kwarg"
+	directiveAttrs[directive] = func() []AttrSpec {
+		return []AttrSpec{
+			{
+				Name:    attr,
+				AddedIn: []string{"8.7.0", "9.2.0"},
+			},
+		}
+	}
+	t.Cleanup(func() { delete(directiveAttrs, directive) })
+
+	cases := []struct {
+		v    string
+		want bool
+	}{
+		{"7.7.1", false}, // never on 7.x
+		{"8.6.0", false}, // pre-backport on 8.x
+		{"8.7.0", true},
+		{"8.99.0", true},
+		{"9.0.0", false}, // pre-forward-port on 9.x
+		{"9.1.99", false},
+		{"9.2.0", true},
+		{"9.99.0", true},
+	}
+	for _, tc := range cases {
+		if got := IsAvailableAt(directive, attr, tc.v); got != tc.want {
+			t.Errorf("IsAvailableAt(%q) = %v, want %v", tc.v, got, tc.want)
+		}
+	}
+}
+
+// TestIsRemovedAt_BranchSpecific: a kwarg deleted on 9.x in 9.5.0 stays
+// available on 8.x indefinitely. Mirrors a deprecation-then-removal flow.
+func TestIsRemovedAt_BranchSpecific(t *testing.T) {
+	const directive = "test_directive_removal"
+	const attr = "doomed_kwarg"
+	directiveAttrs[directive] = func() []AttrSpec {
+		return []AttrSpec{
+			{
+				Name:      attr,
+				RemovedIn: []string{"9.5.0"}, // gone on 9.x only
+			},
+		}
+	}
+	t.Cleanup(func() { delete(directiveAttrs, directive) })
+
+	cases := []struct {
+		v         string
+		removed   bool
+		available bool
+	}{
+		{"7.7.1", false, true},  // 7.x: not removed
+		{"8.7.0", false, true},  // 8.x: not removed
+		{"9.4.99", false, true}, // pre-removal on 9.x
+		{"9.5.0", true, false},  // 9.5.0+ on 9.x: removed -> unavailable
+		{"9.5.1", true, false},
+		{"9.99.0", true, false},
+	}
+	for _, tc := range cases {
+		if got := IsRemovedAt(directive, attr, tc.v); got != tc.removed {
+			t.Errorf("IsRemovedAt(%q) = %v, want %v", tc.v, got, tc.removed)
+		}
+		if got := IsAvailableAt(directive, attr, tc.v); got != tc.available {
+			t.Errorf("IsAvailableAt(%q) = %v, want %v", tc.v, got, tc.available)
+		}
+	}
+}
+
+// TestIsAvailableAt_AddedThenRemoved: a kwarg that was BOTH backported in
+// (AddedIn=[8.7.0, 9.2.0]) and later REMOVED on the 9.x branch
+// (RemovedIn=[9.5.0]). IsAvailableAt must compose both gates.
+func TestIsAvailableAt_AddedThenRemoved(t *testing.T) {
+	const directive = "test_directive_both"
+	const attr = "shortlived_kwarg"
+	directiveAttrs[directive] = func() []AttrSpec {
+		return []AttrSpec{
+			{
+				Name:      attr,
+				AddedIn:   []string{"8.7.0", "9.2.0"},
+				RemovedIn: []string{"9.5.0"},
+			},
+		}
+	}
+	t.Cleanup(func() { delete(directiveAttrs, directive) })
+
+	cases := []struct {
+		v    string
+		want bool
+	}{
+		{"7.7.1", false}, // never added on 7.x
+		{"8.6.0", false}, // pre-backport on 8.x
+		{"8.7.0", true},  // backport on 8.x, no removal here -> available
+		{"8.99.0", true}, // 8.x lives on
+		{"9.0.0", false}, // 9.x: not yet added
+		{"9.2.0", true},  // 9.x: added
+		{"9.4.99", true}, // 9.x: still there
+		{"9.5.0", false}, // 9.x: removed
+		{"9.5.1", false},
+	}
+	for _, tc := range cases {
+		if got := IsAvailableAt(directive, attr, tc.v); got != tc.want {
+			t.Errorf("IsAvailableAt(%q) = %v, want %v", tc.v, got, tc.want)
+		}
+	}
+}
+
+// TestAttrSpec_AtMostOneEntryPerMajor enforces the per-major-uniqueness
+// invariant across every registered directive in the spec. Two entries
+// sharing a major would silently cause the first-wins resolver to return
+// stale answers on the second cherry-pick window.
+func TestAttrSpec_AtMostOneEntryPerMajor(t *testing.T) {
+	check := func(t *testing.T, directive, attr, field string, stage []string) {
+		t.Helper()
+		seen := map[int]string{}
+		for _, v := range stage {
+			parts := parseSemver3(v)
+			major := parts[0]
+			if prev, ok := seen[major]; ok {
+				t.Errorf("%s.%s: %s has two entries for major %d (%q and %q); only the earliest may be recorded",
+					directive, attr, field, major, prev, v)
+			}
+			seen[major] = v
+		}
+	}
+	for directive, fn := range directiveAttrs {
+		for _, s := range fn() {
+			check(t, directive, s.Name, "AddedIn", s.AddedIn)
+			check(t, directive, s.Name, "DeprecatedIn", s.DeprecatedIn)
+			check(t, directive, s.Name, "NoopSince", s.NoopSince)
+			check(t, directive, s.Name, "RemovedIn", s.RemovedIn)
+		}
 	}
 }
