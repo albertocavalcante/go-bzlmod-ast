@@ -329,6 +329,116 @@ func TestIsAvailableAt_AddedThenRemoved(t *testing.T) {
 	}
 }
 
+// TestIsAvailableAt_IncludeDirective pins the AddedIn data for include().
+// Real Bazel emits "unknown function 'include'" at 7.1.x and earlier;
+// at 7.2.0 onward it parses. This test mirrors that semantic against
+// the spec's per-major AddedIn list.
+func TestIsAvailableAt_IncludeDirective(t *testing.T) {
+	cases := []struct {
+		v    string
+		want bool
+	}{
+		// 7.x branch: include() arrived in 7.2.0.
+		{"7.0.0", false},
+		{"7.1.0", false},
+		{"7.1.2", false},
+		{"7.2.0", true},
+		{"7.2.1", true},
+		{"7.7.1", true},
+		// 8.x branch: included from 8.0.0 onward.
+		{"8.0.0", true},
+		{"8.7.0", true},
+		// 9.x branch: included from 9.0.0 onward.
+		{"9.0.0", true},
+		{"9.1.1", true},
+	}
+	for _, tc := range cases {
+		if got := IsAvailableAt("include", "label", tc.v); got != tc.want {
+			t.Errorf("IsAvailableAt(include.label, %q) = %v, want %v", tc.v, got, tc.want)
+		}
+	}
+}
+
+// TestIsAvailableAt_FlagAliasNonMonotone pins the cherry-pick story for
+// flag_alias(): added in 7.7.0 on 7.x, REMOVED in 8.0.0 (8.0.x-8.4.x do
+// not have it), RE-ADDED in 8.5.0, present in 9.0.0 onward. The per-major
+// AddedIn slice models this naturally because the 8.x entry is 8.5.0,
+// so 8.0.0-8.4.x query as "not available".
+func TestIsAvailableAt_FlagAliasNonMonotone(t *testing.T) {
+	cases := []struct {
+		v    string
+		want bool
+	}{
+		// 7.x branch.
+		{"7.6.0", false}, // pre-add
+		{"7.7.0", true},  // added
+		{"7.7.1", true},
+		// 8.x branch: gap from 8.0.0 to 8.4.x.
+		{"8.0.0", false},
+		{"8.4.2", false}, // last 8.x version without flag_alias
+		{"8.5.0", true},  // re-added
+		{"8.5.1", true},
+		{"8.6.0", true},
+		{"8.7.0", true},
+		// 9.x branch.
+		{"9.0.0", true},
+		{"9.1.1", true},
+	}
+	for _, tc := range cases {
+		if got := IsAvailableAt("flag_alias", "name", tc.v); got != tc.want {
+			t.Errorf("IsAvailableAt(flag_alias.name, %q) = %v, want %v", tc.v, got, tc.want)
+		}
+	}
+}
+
+// TestIsAvailableAt_OverrideRepoInjectRepo pins the 7.4.0 / 8.0.0 / 9.0.0
+// arrival boundaries for override_repo and inject_repo.
+func TestIsAvailableAt_OverrideRepoInjectRepo(t *testing.T) {
+	for _, directive := range []string{"override_repo", "inject_repo"} {
+		t.Run(directive, func(t *testing.T) {
+			cases := []struct {
+				v    string
+				want bool
+			}{
+				{"7.3.0", false},
+				{"7.3.2", false},
+				{"7.4.0", true},
+				{"7.7.1", true},
+				{"8.0.0", true},
+				{"9.0.0", true},
+			}
+			for _, tc := range cases {
+				if got := IsAvailableAt(directive, "extension_proxy", tc.v); got != tc.want {
+					t.Errorf("IsAvailableAt(%s.extension_proxy, %q) = %v, want %v",
+						directive, tc.v, got, tc.want)
+				}
+			}
+		})
+	}
+}
+
+// TestIsAvailableAt_AlwaysAvailable spot-checks attrs whose AddedIn is
+// empty (always present in scope): they should report available for
+// every version we query.
+func TestIsAvailableAt_AlwaysAvailable(t *testing.T) {
+	checks := []struct {
+		directive string
+		attr      string
+	}{
+		{"module", "name"},
+		{"bazel_dep", "version"},
+		{"use_extension", "isolate"}, // present since 7.0.0
+	}
+	for _, c := range checks {
+		for _, v := range []string{"7.0.0", "7.7.1", "8.5.1", "9.1.1"} {
+			if !IsAvailableAt(c.directive, c.attr, v) {
+				t.Errorf("IsAvailableAt(%s.%s, %q) = false, want true (always-available attr)",
+					c.directive, c.attr, v)
+			}
+		}
+	}
+}
+
 // TestAttrSpec_AtMostOneEntryPerMajor enforces the per-major-uniqueness
 // invariant across every registered directive in the spec. Two entries
 // sharing a major would silently cause the first-wins resolver to return

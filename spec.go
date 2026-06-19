@@ -216,6 +216,95 @@ func LocalPathOverrideAttrs() []AttrSpec {
 	}
 }
 
+// UseExtensionAttrs returns the canonical attribute spec for
+// use_extension(). Reference: ModuleFileGlobals.java
+// @StarlarkMethod(name = "use_extension").
+//
+// All listed attributes have been part of use_extension since the
+// earliest in-scope Bazel release (7.0.0), so AddedIn is empty.
+func UseExtensionAttrs() []AttrSpec {
+	return []AttrSpec{
+		{Name: "extension_bzl_file", Doc: "Label of the .bzl file that defines the extension. Required."},
+		{Name: "extension_name", Doc: "Name of the extension as defined in extension_bzl_file. Required."},
+		{Name: "dev_dependency", Doc: "True if the extension's results should be confined to dev/test."},
+		{Name: "isolate", Doc: "If true, isolate this usage from all other usages of the same extension."},
+	}
+}
+
+// IncludeAttrs returns the canonical attribute spec for include().
+// Reference: ModuleFileGlobals.java @StarlarkMethod(name =
+// CompiledModuleFile.INCLUDE_IDENTIFIER) and CompiledModuleFile.java.
+//
+// include() landed in Bazel 7.2.0 on the 7.x branch. The 8.x and 9.x
+// branches inherit it from their initial 8.0.0 / 9.0.0 releases. The
+// directive doesn't have a per-attribute lifecycle of its own beyond
+// "the directive exists": we record AddedIn on the single 'label'
+// kwarg as a proxy for directive availability.
+func IncludeAttrs() []AttrSpec {
+	return []AttrSpec{
+		{
+			Name:    "label",
+			Doc:     "Label of the MODULE.bazel fragment to include. Required (positional).",
+			AddedIn: []string{"7.2.0", "8.0.0", "9.0.0"},
+		},
+	}
+}
+
+// OverrideRepoAttrs returns the canonical attribute spec for
+// override_repo(). Reference: ModuleFileGlobals.java @StarlarkMethod(name
+// = "override_repo").
+//
+// override_repo() landed in 7.4.0 on the 7.x branch and was carried
+// into the 8.x line at 8.0.0 and the 9.x line at 9.0.0.
+func OverrideRepoAttrs() []AttrSpec {
+	return []AttrSpec{
+		{
+			Name:    "extension_proxy",
+			Doc:     "use_extension proxy whose repo namespace is being overridden. Required (positional).",
+			AddedIn: []string{"7.4.0", "8.0.0", "9.0.0"},
+		},
+	}
+}
+
+// InjectRepoAttrs returns the canonical attribute spec for
+// inject_repo(). Reference: ModuleFileGlobals.java @StarlarkMethod(name
+// = "inject_repo").
+//
+// inject_repo() landed in 7.4.0 on the 7.x branch and was carried into
+// the 8.x line at 8.0.0 and the 9.x line at 9.0.0.
+func InjectRepoAttrs() []AttrSpec {
+	return []AttrSpec{
+		{
+			Name:    "extension_proxy",
+			Doc:     "use_extension proxy whose repo namespace is being extended. Required (positional).",
+			AddedIn: []string{"7.4.0", "8.0.0", "9.0.0"},
+		},
+	}
+}
+
+// FlagAliasAttrs returns the canonical attribute spec for flag_alias().
+// Reference: ModuleFileGlobals.java @StarlarkMethod(name = "flag_alias").
+//
+// flag_alias() has a non-monotone history: it was added to the 7.x
+// branch in 7.7.0, REMOVED from the 8.x branch in 8.0.0 (so 8.0.x
+// through 8.4.x do not have it), then RE-ADDED in 8.5.0, and present
+// in 9.0.0 onward. The per-major AddedIn slice captures the actual
+// earliest-presence on each branch.
+func FlagAliasAttrs() []AttrSpec {
+	return []AttrSpec{
+		{
+			Name:    "name",
+			Doc:     "Local alias to expose. Required.",
+			AddedIn: []string{"7.7.0", "8.5.0", "9.0.0"},
+		},
+		{
+			Name:    "flag",
+			Doc:     "Label of the build flag the alias targets. Required.",
+			AddedIn: []string{"7.7.0", "8.5.0", "9.0.0"},
+		},
+	}
+}
+
 // directiveAttrs maps a directive name (as it appears in MODULE.bazel
 // source) to its attribute spec function.
 var directiveAttrs = map[string]func() []AttrSpec{
@@ -226,6 +315,11 @@ var directiveAttrs = map[string]func() []AttrSpec{
 	"git_override":              GitOverrideAttrs,
 	"archive_override":          ArchiveOverrideAttrs,
 	"local_path_override":       LocalPathOverrideAttrs,
+	"use_extension":             UseExtensionAttrs,
+	"include":                   IncludeAttrs,
+	"override_repo":             OverrideRepoAttrs,
+	"inject_repo":               InjectRepoAttrs,
+	"flag_alias":                FlagAliasAttrs,
 }
 
 // LookupAttr returns the AttrSpec for an attribute of a directive,
