@@ -290,16 +290,22 @@ func InjectRepoAttrs() []AttrSpec {
 // through 8.4.x do not have it), then RE-ADDED in 8.5.0, and present
 // in 9.0.0 onward. The per-major AddedIn slice captures the actual
 // earliest-presence on each branch.
+//
+// The kwarg is `starlark_flag` (not `flag` as one might guess) -- this
+// pairs the public CLI flag name with the underlying Starlark
+// build-setting label, e.g. flag_alias(name="foo", starlark_flag=
+// "//defs:foo"). The directive itself was a documented no-op on 7.x
+// and is wired up for real on 9.x.
 func FlagAliasAttrs() []AttrSpec {
 	return []AttrSpec{
 		{
 			Name:    "name",
-			Doc:     "Local alias to expose. Required.",
+			Doc:     "Local alias name exposed on the Bazel command line. Required.",
 			AddedIn: []string{"7.7.0", "8.5.0", "9.0.0"},
 		},
 		{
-			Name:    "flag",
-			Doc:     "Label of the build flag the alias targets. Required.",
+			Name:    "starlark_flag",
+			Doc:     "Label of the Starlark build-setting flag the alias targets. Required.",
 			AddedIn: []string{"7.7.0", "8.5.0", "9.0.0"},
 		},
 	}
