@@ -87,16 +87,16 @@ func walkStatement(stmt Statement, handler Handler) error {
 //	}
 type BaseHandler struct{}
 
-func (h *BaseHandler) Module(*ModuleDecl) error                                 { return nil }
-func (h *BaseHandler) BazelDep(*BazelDep) error                                 { return nil }
-func (h *BaseHandler) UseExtension(*UseExtension) error                         { return nil }
-func (h *BaseHandler) UseRepo(*UseRepo) error                                   { return nil }
-func (h *BaseHandler) SingleVersionOverride(*SingleVersionOverride) error       { return nil }
-func (h *BaseHandler) MultipleVersionOverride(*MultipleVersionOverride) error   { return nil }
-func (h *BaseHandler) GitOverride(*GitOverride) error                           { return nil }
-func (h *BaseHandler) ArchiveOverride(*ArchiveOverride) error                   { return nil }
-func (h *BaseHandler) LocalPathOverride(*LocalPathOverride) error               { return nil }
-func (h *BaseHandler) RegisterToolchains(*RegisterToolchains) error             { return nil }
+func (h *BaseHandler) Module(*ModuleDecl) error                               { return nil }
+func (h *BaseHandler) BazelDep(*BazelDep) error                               { return nil }
+func (h *BaseHandler) UseExtension(*UseExtension) error                       { return nil }
+func (h *BaseHandler) UseRepo(*UseRepo) error                                 { return nil }
+func (h *BaseHandler) SingleVersionOverride(*SingleVersionOverride) error     { return nil }
+func (h *BaseHandler) MultipleVersionOverride(*MultipleVersionOverride) error { return nil }
+func (h *BaseHandler) GitOverride(*GitOverride) error                         { return nil }
+func (h *BaseHandler) ArchiveOverride(*ArchiveOverride) error                 { return nil }
+func (h *BaseHandler) LocalPathOverride(*LocalPathOverride) error             { return nil }
+func (h *BaseHandler) RegisterToolchains(*RegisterToolchains) error           { return nil }
 func (h *BaseHandler) RegisterExecutionPlatforms(*RegisterExecutionPlatforms) error {
 	return nil
 }
