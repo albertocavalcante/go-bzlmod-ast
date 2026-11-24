@@ -36,24 +36,24 @@ import (
 //
 // Each lifecycle slice MUST obey:
 //
-//   1. At most one entry per major. If the transition reaches a branch,
-//      one entry records the earliest version on that branch where it
-//      took effect; subsequent patches inherit the state.
-//   2. Each entry is parseable as major.minor.patch (pre-release and
-//      build suffixes are tolerated but ignored).
-//   3. A nil/empty slice means the transition has not landed on ANY
-//      in-scope branch. Use this when the attribute is still in its
-//      prior state everywhere we track.
+//  1. At most one entry per major. If the transition reaches a branch,
+//     one entry records the earliest version on that branch where it
+//     took effect; subsequent patches inherit the state.
+//  2. Each entry is parseable as major.minor.patch (pre-release and
+//     build suffixes are tolerated but ignored).
+//  3. A nil/empty slice means the transition has not landed on ANY
+//     in-scope branch. Use this when the attribute is still in its
+//     prior state everywhere we track.
 //
 // Examples:
 //
-//   DeprecatedIn: ["8.6.0", "9.1.0"]     -> deprecated since 8.6.0 on 8.x,
-//                                          since 9.1.0 on 9.x, never on 7.x.
-//   DeprecatedIn: nil                    -> not deprecated anywhere in scope.
-//   AddedIn:      ["8.7.0", "9.2.0"]     -> backported new kwarg; 8.7.0+ on
-//                                          8.x, 9.2.0+ on 9.x.
-//   RemovedIn:    ["9.5.0"]              -> deleted on 9.x in 9.5.0; still
-//                                          present on 8.x.
+//	DeprecatedIn: ["8.6.0", "9.1.0"]     -> deprecated since 8.6.0 on 8.x,
+//	                                       since 9.1.0 on 9.x, never on 7.x.
+//	DeprecatedIn: nil                    -> not deprecated anywhere in scope.
+//	AddedIn:      ["8.7.0", "9.2.0"]     -> backported new kwarg; 8.7.0+ on
+//	                                       8.x, 9.2.0+ on 9.x.
+//	RemovedIn:    ["9.5.0"]              -> deleted on 9.x in 9.5.0; still
+//	                                       present on 8.x.
 //
 // # Query semantics
 //

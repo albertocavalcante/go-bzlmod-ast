@@ -86,7 +86,7 @@ type BazelDep struct {
 	RepoName              label.ApparentRepo
 	DevDependency         bool
 	// IsNodepDep is true when the source declared repo_name=None
-	// literally, signalling a nodep dependency: the version flows
+	// literally, signaling a nodep dependency: the version flows
 	// into module selection but no repo edge is created. An
 	// omitted repo_name yields a regular bazel_dep with empty
 	// RepoName, not a nodep dep.
