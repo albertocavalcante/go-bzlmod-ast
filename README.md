@@ -68,6 +68,31 @@ Each typed statement exposes its source `Span` via the `Statement`
 interface — `stmt.Span().Start` for the start, `.End` for the end.
 The same `Span` is reachable as the typed struct's `Pos` field.
 
+### Following `include()`
+
+`ParseContent` records `include()` as an `*ast.Include` and does not
+open the named file. To see dependencies declared in included files,
+expand them over an `io/fs.FS` rooted at the workspace:
+
+```go
+root, err := os.OpenRoot(workspaceRoot) // confines symlinks, unlike os.DirFS
+if err != nil { /* handle */ }
+defer root.Close()
+x, err := ast.ParseWithIncludes(ctx, root.FS(), ast.IncludeOptions{})
+if err != nil { /* *ast.IncludeError; match with errors.Is(err, ast.ErrIncludeNotFound) etc. */ }
+for _, s := range x.Statements {
+    if dep, ok := s.Statement.(*ast.BazelDep); ok {
+        fmt.Println(dep.Name, "declared in", s.File.Path) // edit s.File, not the root
+    }
+}
+```
+
+`ExpandIncludes(ctx, parseResult, fsys, opts)` does the same for an
+already parsed file. Statements come back in Bazel's evaluation order
+with their owning file and include chain; `IncludeOptions` bounds
+depth, file count, bytes and statements. Unlike Bazel, a BUILD file in
+the included file's package is not required.
+
 ## Package layout
 
 - `parser.go` — `ParseFile(path)` and `ParseContent(filename, data)`;
@@ -81,6 +106,8 @@ The same `Span` is reachable as the typed struct's `Pos` field.
   `RegisterExecutionPlatforms`, `Include`, `ExtensionTagCall`,
   `UseRepoRule`, `InjectRepo`, `OverrideRepo`, `FlagAlias`,
   `UnknownStatement`.
+- `include.go` — `ExpandIncludes`, `ParseWithIncludes`, `IncludePath`
+  and the typed `IncludeError`.
 - `handler.go` — the `Handler` interface, `Walk(file, handler)`,
   `BaseHandler` no-op embed, and two ready-made collectors
   (`DependencyCollector`, `OverrideCollector`).
