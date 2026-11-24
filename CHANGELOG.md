@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `include.go` — `ExpandIncludes` / `ParseWithIncludes` splice
+  `include()` files (read from an `io/fs.FS`) into a flat, bounded,
+  provenance-carrying statement list; `IncludePath` resolves an
+  include label to a root-relative path. `Include.DevDependency`
+  mirrors Bazel 9.3's `dev_dependency` argument, which `spec.go` now
+  lists.
+
+### Changed
+
+- `ParseContent` now records a parse error for an `include()` call that
+  is not one positional string literal (plus an optional literal
+  `dev_dependency`), such as `include(label = "...")`, and drops that
+  statement, because Bazel rejects it as a syntax error.
+
 Initial release:
 
 - `parser.go` — `ParseFile(path)` and `ParseContent(filename, data)`

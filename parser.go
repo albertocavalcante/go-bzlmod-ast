@@ -210,7 +210,37 @@ func (p *Parser) parseInclude(call *build.CallExpr, pos Span) *Include {
 		p.addErrorf(pos.Start, "include: missing required label argument")
 	}
 
+	if inc.Label != "" && !isWellFormedInclude(call) {
+		// Bazel rejects any other shape as a syntax error; drop the
+		// statement so nothing follows a label Bazel would not.
+		p.addErrorf(pos.Start, "include: must be called with one positional string literal and optionally dev_dependency = True/False")
+		return nil
+	}
+	inc.DevDependency = buildutil.Bool(call, "dev_dependency")
+
 	return inc
+}
+
+// isWellFormedInclude reports whether call has the only shape Bazel
+// accepts: one positional string literal, optionally followed by
+// dev_dependency = True/False (CompiledModuleFile.checkModuleFileSyntax).
+func isWellFormedInclude(call *build.CallExpr) bool {
+	if len(call.List) == 0 || len(call.List) > 2 {
+		return false
+	}
+	if _, ok := call.List[0].(*build.StringExpr); !ok {
+		return false
+	}
+	if len(call.List) == 1 {
+		return true
+	}
+	kw, ok := call.List[1].(*build.AssignExpr)
+	if !ok {
+		return false
+	}
+	lhs, lok := kw.LHS.(*build.Ident)
+	rhs, rok := kw.RHS.(*build.Ident)
+	return lok && rok && lhs.Name == "dev_dependency" && (rhs.Name == "True" || rhs.Name == "False")
 }
 
 func (p *Parser) parseExtensionTagCall(call *build.CallExpr, dotExpr *build.DotExpr, pos Span) *ExtensionTagCall {
