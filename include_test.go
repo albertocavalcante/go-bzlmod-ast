@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,6 +30,7 @@ func TestIncludePath(t *testing.T) {
 		"///a:deps.MODULE.bazel", "//a/:deps.MODULE.bazel", "//a:b//deps.MODULE.bazel", `//a\b:deps.MODULE.bazel`,
 		"//a:b:deps.MODULE.bazel", "//:MODULE.bazel", "//:.MODULE.bazel", "//:deps.bzl", "//:deps.module.bazel",
 		"//:deps.MODULE.bazel/", "//:a\x00.MODULE.bazel", "//a:\n.MODULE.bazel", "//\u00e9:x.MODULE.bazel",
+		"//...:x.MODULE.bazel", "//a/.../b:x.MODULE.bazel", "//a/..../b:x.MODULE.bazel",
 	} {
 		if got, err := IncludePath(in); err == nil {
 			t.Errorf("IncludePath(%q) = %q, want error", in, got)
@@ -148,29 +150,30 @@ func TestExpandIncludes_Errors(t *testing.T) {
 	}{
 		{"missing", fstest.MapFS{"MODULE.bazel": root("\ninclude(\"//x:gone.MODULE.bazel\")")}, IncludeOptions{}, ErrIncludeNotFound, "MODULE.bazel:2:1: included file not found: \"//x:gone.MODULE.bazel\" (x/gone.MODULE.bazel)"},
 		{"nested missing", fstest.MapFS{"MODULE.bazel": root(`include("//:a.MODULE.bazel")`), "a.MODULE.bazel": root(`include("//b:gone.MODULE.bazel")`)}, IncludeOptions{}, ErrIncludeNotFound, "a.MODULE.bazel:1:1: included file not found: \"//b:gone.MODULE.bazel\" (b/gone.MODULE.bazel)"},
-		{"root missing", fstest.MapFS{}, IncludeOptions{}, ErrIncludeNotFound, "MODULE.bazel: included file not found"},
-		{"directory", fstest.MapFS{"MODULE.bazel": root(`include("//:d.MODULE.bazel")`), "d.MODULE.bazel/f": root("")}, IncludeOptions{}, ErrIncludeNotFound, "not a regular file"},
+		{"root missing", fstest.MapFS{}, IncludeOptions{}, ErrRootModuleNotFound, "MODULE.bazel: root MODULE.bazel not found: open MODULE.bazel"},
+		{"directory", fstest.MapFS{"MODULE.bazel": root(`include("//:d.MODULE.bazel")`), "d.MODULE.bazel/f": root("")}, IncludeOptions{}, ErrIncludeUnreadable, "not a regular file"},
+		{"unknown role", fstest.MapFS{"MODULE.bazel": root("")}, IncludeOptions{Role: 7}, ErrInvalidIncludeOptions, "unknown ModuleRole 7"},
 		{"self cycle", fstest.MapFS{"MODULE.bazel": root(`include("//:a.MODULE.bazel")`), "a.MODULE.bazel": root(`include("//:a.MODULE.bazel")`)}, IncludeOptions{}, ErrIncludeCycle, "//:a.MODULE.bazel -> //:a.MODULE.bazel"},
 		{"indirect cycle", fstest.MapFS{"MODULE.bazel": root(`include("//:a.MODULE.bazel")`), "a.MODULE.bazel": root(`include("//b:b.MODULE.bazel")`), "b/b.MODULE.bazel": root(`include("//:a.MODULE.bazel")`)}, IncludeOptions{}, ErrIncludeCycle, "b/b.MODULE.bazel:1:1: include() cycle: \"//:a.MODULE.bazel\" (a.MODULE.bazel): //:a.MODULE.bazel -> //b:b.MODULE.bazel -> //:a.MODULE.bazel"},
 		{"wrong suffix", fstest.MapFS{"MODULE.bazel": root(`include("//:deps.bzl")`)}, IncludeOptions{}, ErrInvalidIncludeLabel, "must end in"},
 		{"escapes root", fstest.MapFS{"MODULE.bazel": root(`include("//..:x.MODULE.bazel")`)}, IncludeOptions{}, ErrInvalidIncludeLabel, "invalid package"},
 		{"repo qualified", fstest.MapFS{"MODULE.bazel": root(`include("@other//:x.MODULE.bazel")`)}, IncludeOptions{}, ErrInvalidIncludeLabel, `must start with "//"`},
 		{"relative", fstest.MapFS{"MODULE.bazel": root(`include(":x.MODULE.bazel")`)}, IncludeOptions{}, ErrInvalidIncludeLabel, `must start with "//"`},
-		{"bad dev_dependency", fstest.MapFS{"MODULE.bazel": root(`include("//:x.MODULE.bazel", dev_dependency = 1)`)}, IncludeOptions{}, ErrInvalidIncludeLabel, "one positional"},
-		{"extra positional", fstest.MapFS{"MODULE.bazel": root(`include("//:x.MODULE.bazel", "//:y.MODULE.bazel")`)}, IncludeOptions{}, ErrInvalidIncludeLabel, "one positional"},
-		{"keyword label", fstest.MapFS{"MODULE.bazel": root(`include(label = "//:x.MODULE.bazel")`)}, IncludeOptions{}, ErrInvalidIncludeLabel, "one positional string literal"},
 		{"module in include", fstest.MapFS{"MODULE.bazel": root(`include("//:a.MODULE.bazel")`), "a.MODULE.bazel": root("\n\nmodule(name = \"x\")")}, IncludeOptions{}, ErrIncludeForbiddenStatement, "a.MODULE.bazel:3:1: statement not allowed"},
 		{"registry module", fstest.MapFS{"MODULE.bazel": root(`include("//:a.MODULE.bazel")`)}, IncludeOptions{Role: RegistryModule}, ErrIncludeNotAllowed, "only the root module"},
-		{"depth", fstest.MapFS{"MODULE.bazel": root(`include("//:a.MODULE.bazel")`), "a.MODULE.bazel": root(`include("//:b.MODULE.bazel")`), "b.MODULE.bazel": root("")}, IncludeOptions{MaxDepth: 1}, ErrIncludeLimit, "depth exceeds 1"},
-		{"files", fstest.MapFS{"MODULE.bazel": root("include(\"//:a.MODULE.bazel\")\ninclude(\"//:a.MODULE.bazel\")"), "a.MODULE.bazel": root("")}, IncludeOptions{MaxFiles: 1}, ErrIncludeLimit, "more than 1 included files"},
-		{"statements", fstest.MapFS{"MODULE.bazel": root(strings.Repeat("include(\"//:a.MODULE.bazel\")\n", 10)), "a.MODULE.bazel": root(strings.Repeat("x()\n", 50))}, IncludeOptions{MaxStatements: 100}, ErrIncludeLimit, "more than 100 expanded statements"},
-		{"file bytes", fstest.MapFS{"MODULE.bazel": root(`include("//:a.MODULE.bazel")`), "a.MODULE.bazel": big}, IncludeOptions{MaxFileBytes: 1000}, ErrIncludeLimit, "exceeds 1000 bytes"},
-		{"total bytes", fstest.MapFS{"MODULE.bazel": root(`include("//:a.MODULE.bazel")`), "a.MODULE.bazel": big}, IncludeOptions{MaxTotalBytes: 1500}, ErrIncludeLimit, "total exceeds 1500"},
+		{"depth", fstest.MapFS{"MODULE.bazel": root(`include("//:a.MODULE.bazel")`), "a.MODULE.bazel": root(`include("//:b.MODULE.bazel")`), "b.MODULE.bazel": root("")}, IncludeOptions{MaxDepth: 1}, ErrIncludeLimit, "MaxDepth (1) reached"},
+		{"files", fstest.MapFS{"MODULE.bazel": root("include(\"//:a.MODULE.bazel\")\ninclude(\"//:a.MODULE.bazel\")"), "a.MODULE.bazel": root("")}, IncludeOptions{MaxFiles: 1}, ErrIncludeLimit, "MaxFiles (1) reached"},
+		{"statements", fstest.MapFS{"MODULE.bazel": root(strings.Repeat("include(\"//:a.MODULE.bazel\")\n", 10)), "a.MODULE.bazel": root(strings.Repeat("x()\n", 50))}, IncludeOptions{MaxStatements: 100}, ErrIncludeLimit, "MaxStatements (100) reached"},
+		{"file bytes", fstest.MapFS{"MODULE.bazel": root(`include("//:a.MODULE.bazel")`), "a.MODULE.bazel": big}, IncludeOptions{MaxFileBytes: 1000}, ErrIncludeLimit, "MaxFileBytes (1000) exceeded"},
+		{"total bytes", fstest.MapFS{"MODULE.bazel": root(`include("//:a.MODULE.bazel")`), "a.MODULE.bazel": big}, IncludeOptions{MaxTotalBytes: 1500}, ErrIncludeLimit, "MaxTotalBytes (1500) exceeded"},
 		{"syntax error", fstest.MapFS{"MODULE.bazel": root(`include("//:a.MODULE.bazel")`), "a.MODULE.bazel": root("bazel_dep(")}, IncludeOptions{}, ErrIncludeUnreadable, "syntax error"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := expand(t, tt.fsys, tt.opts)
+			x, err := expand(t, tt.fsys, tt.opts)
+			if x == nil {
+				t.Fatal("result must be non-nil on failure")
+			}
 			var ie *IncludeError
 			if !errors.Is(err, tt.want) || !errors.As(err, &ie) {
 				t.Fatalf("err = %v, want %v", err, tt.want)
@@ -179,6 +182,70 @@ func TestExpandIncludes_Errors(t *testing.T) {
 				t.Errorf("err = %q, want it to contain %q", err, tt.msg)
 			}
 		})
+	}
+}
+
+func TestExpandIncludes_MalformedIncludeIsParseError(t *testing.T) {
+	for _, call := range []string{
+		`include(label = "//:x.MODULE.bazel")`,
+		`include("//:x.MODULE.bazel", dev_dependency = 1)`,
+		`include("//:x.MODULE.bazel", "//:y.MODULE.bazel")`,
+	} {
+		fsys := fstest.MapFS{"MODULE.bazel": {Data: []byte(call)}, "x.MODULE.bazel": {Data: []byte(`bazel_dep(name = "x", version = "1")`)}}
+		x, err := expand(t, fsys, IncludeOptions{})
+		if err != nil || !x.HasErrors() || len(x.Statements) != 0 || !strings.Contains(x.Errors[0].Error(), "MODULE.bazel:1:1: include: must be called with one positional") {
+			t.Errorf("%s: err = %v, errors = %v, statements = %d", call, err, x.Errors, len(x.Statements))
+		}
+	}
+}
+
+func TestExpandIncludes_PartialResultAndHasErrors(t *testing.T) {
+	fsys := fstest.MapFS{
+		"MODULE.bazel":   {Data: []byte("bazel_dep(name = \"r\", version = \"1\")\ninclude(\"//:a.MODULE.bazel\")\nbazel_dep(name = \"never\", version = \"1\")")},
+		"a.MODULE.bazel": {Data: []byte("bazel_dep(version = \"1\")\ninclude(\"//:gone.MODULE.bazel\")")},
+	}
+	x, err := expand(t, fsys, IncludeOptions{})
+	if !errors.Is(err, ErrIncludeNotFound) {
+		t.Fatalf("err = %v", err)
+	}
+	want := `MODULE.bazel:1 *ast.BazelDep []
+MODULE.bazel:2 *ast.Include []
+a.MODULE.bazel:2 *ast.Include [a.MODULE.bazel@2]
+`
+	if got := summary(x); got != want || len(x.Files) != 2 || !x.HasErrors() {
+		t.Errorf("partial result:\n%s files=%d errors=%v", got, len(x.Files), x.Errors)
+	}
+	delete(fsys, "a.MODULE.bazel")
+	fsys["a.MODULE.bazel"] = &fstest.MapFile{Data: []byte(`bazel_dep(version = "1")`)}
+	if x, err := expand(t, fsys, IncludeOptions{}); err != nil || !x.HasErrors() {
+		t.Errorf("invalid statement in an included file: err = %v, HasErrors = %v", err, x.HasErrors())
+	}
+}
+
+// cancelFS cancels its context when a given file is opened.
+type cancelFS struct {
+	fstest.MapFS
+	name   string
+	cancel context.CancelFunc
+}
+
+func (c cancelFS) Open(name string) (fs.File, error) {
+	if name == c.name {
+		c.cancel()
+	}
+	return c.MapFS.Open(name)
+}
+
+func TestExpandIncludes_CanceledDuringParse(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fsys := cancelFS{fstest.MapFS{
+		"MODULE.bazel":   {Data: []byte(`include("//:a.MODULE.bazel")`)},
+		"a.MODULE.bazel": {Data: []byte(`bazel_dep(name = "a", version = "1")`)},
+	}, "a.MODULE.bazel", cancel}
+	x, err := ParseWithIncludes(ctx, fsys, IncludeOptions{})
+	if !errors.Is(err, context.Canceled) || x == nil || len(x.Files) != 2 {
+		t.Fatalf("err = %v, result = %+v", err, x)
 	}
 }
 
@@ -222,5 +289,13 @@ func TestExpandIncludes_DirFS(t *testing.T) {
 	last := x.Statements[len(x.Statements)-1]
 	if dep, ok := last.Statement.(*BazelDep); !ok || dep.Name.String() != "rules_antlr" || last.File.Path != "src/bazel/modules/nested/more.MODULE.bazel" {
 		t.Fatalf("unexpected expansion:\n%s", summary(x))
+	}
+}
+
+func TestIsAvailableAt_IncludeDevDependency(t *testing.T) {
+	for v, want := range map[string]bool{"7.7.3": false, "8.9.0": false, "9.2.0": false, "9.3.0": true, "9.3.3": true} {
+		if got := IsAvailableAt("include", "dev_dependency", v); got != want {
+			t.Errorf("IsAvailableAt(include, dev_dependency, %s) = %v, want %v", v, got, want)
+		}
 	}
 }

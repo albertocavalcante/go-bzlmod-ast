@@ -210,8 +210,13 @@ func (p *Parser) parseInclude(call *build.CallExpr, pos Span) *Include {
 		p.addErrorf(pos.Start, "include: missing required label argument")
 	}
 
+	if inc.Label != "" && !isWellFormedInclude(call) {
+		// Bazel rejects any other shape as a syntax error; drop the
+		// statement so nothing follows a label Bazel would not.
+		p.addErrorf(pos.Start, "include: must be called with one positional string literal and optionally dev_dependency = True/False")
+		return nil
+	}
 	inc.DevDependency = buildutil.Bool(call, "dev_dependency")
-	inc.malformed = !isWellFormedInclude(call)
 
 	return inc
 }

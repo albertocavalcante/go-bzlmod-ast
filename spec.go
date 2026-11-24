@@ -247,6 +247,11 @@ func IncludeAttrs() []AttrSpec {
 			Doc:     "Label of the MODULE.bazel fragment to include. Required (positional).",
 			AddedIn: []string{"7.2.0", "8.0.0", "9.0.0"},
 		},
+		{
+			Name:    "dev_dependency",
+			Doc:     "If True, the include is ignored unless this is the root module and --ignore_dev_dependency is unset. Must be a literal True or False.",
+			AddedIn: []string{"9.3.0"},
+		},
 	}
 }
 

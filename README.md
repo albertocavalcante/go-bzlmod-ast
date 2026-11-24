@@ -79,7 +79,8 @@ root, err := os.OpenRoot(workspaceRoot) // confines symlinks, unlike os.DirFS
 if err != nil { /* handle */ }
 defer root.Close()
 x, err := ast.ParseWithIncludes(ctx, root.FS(), ast.IncludeOptions{})
-if err != nil { /* *ast.IncludeError; match with errors.Is(err, ast.ErrIncludeNotFound) etc. */ }
+if err != nil { /* *ast.IncludeError; errors.Is(err, ast.ErrIncludeNotFound) etc. x holds a partial result */ }
+if x.HasErrors() { /* invalid statements; see x.Errors */ }
 for _, s := range x.Statements {
     if dep, ok := s.Statement.(*ast.BazelDep); ok {
         fmt.Println(dep.Name, "declared in", s.File.Path) // edit s.File, not the root
@@ -90,8 +91,16 @@ for _, s := range x.Statements {
 `ExpandIncludes(ctx, parseResult, fsys, opts)` does the same for an
 already parsed file. Statements come back in Bazel's evaluation order
 with their owning file and include chain; `IncludeOptions` bounds
-depth, file count, bytes and statements. Unlike Bazel, a BUILD file in
-the included file's package is not required.
+depth, file count, bytes and statements.
+
+Differences from Bazel:
+
+| Behaviour | Here | Bazel |
+|---|---|---|
+| Include depth | capped by `MaxDepth` (stricter) | unbounded |
+| BUILD file in the included file's package | not required (laxer) | required |
+| Bazel version | no switch: override modules and `dev_dependency` are accepted whatever the version (laxer for old releases) | 8.5+ / 9.3+ |
+| Include cycles | always an error | an error from 9.3; earlier releases hang |
 
 ## Package layout
 

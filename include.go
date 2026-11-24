@@ -13,10 +13,13 @@ import (
 // IncludeSuffix is the file name suffix Bazel requires of included files.
 const IncludeSuffix = ".MODULE.bazel"
 
-// Errors reported by [ExpandIncludes]. Apart from context errors and a
-// root syntax error, every returned error is an *[IncludeError] that
-// matches exactly one of these with [errors.Is].
+// Errors reported by [ExpandIncludes] and [ParseWithIncludes]. Apart
+// from context errors and a root syntax error (*[ParseError]), every
+// returned error is an *[IncludeError] that matches exactly one of
+// these with [errors.Is].
 var (
+	ErrRootModuleNotFound        = errors.New("root MODULE.bazel not found")
+	ErrInvalidIncludeOptions     = errors.New("invalid include options")
 	ErrInvalidIncludeLabel       = errors.New("invalid include label")
 	ErrIncludeNotAllowed         = errors.New("include() not allowed in this module")
 	ErrIncludeNotFound           = errors.New("included file not found")
@@ -27,8 +30,8 @@ var (
 )
 
 // ModuleRole tells [ExpandIncludes] which module the file belongs to;
-// Bazel only lets some modules use include(). include(dev_dependency=)
-// exists from Bazel 9.3.0; older releases reject it as a syntax error.
+// Bazel only lets some modules use include(). Any other value is
+// ErrInvalidIncludeOptions.
 type ModuleRole int
 
 const (
@@ -41,13 +44,19 @@ const (
 const (
 	DefaultIncludeMaxDepth   = 16
 	DefaultIncludeMaxFiles   = 256
-	DefaultIncludeFileBytes  = 1 << 20
-	DefaultIncludeTotalBytes = 16 << 20
+	DefaultIncludeFileBytes  = 256 << 10
+	DefaultIncludeTotalBytes = 4 << 20
 	DefaultIncludeStatements = 100_000
 )
 
 // IncludeOptions configures [ExpandIncludes]. The zero value expands a
-// root module with the default limits.
+// root module (Role RootModule) with the default limits. Callers that
+// feed module files fetched from a registry must set RegistryModule;
+// otherwise includes Bazel would reject are followed.
+//
+// A limit <= 0 means "use the default". There is no unlimited setting:
+// to raise a limit, pass an explicit larger value. Parsing allocates
+// roughly 70 MiB per MiB of input, so the byte limits bound memory.
 type IncludeOptions struct {
 	Role                ModuleRole
 	IgnoreDevDependency bool  // skip dev_dependency includes, like --ignore_dev_dependency
@@ -77,6 +86,11 @@ type ExpandedStatement struct {
 }
 
 // ExpandedFile is a module file with every include() spliced in place.
+//
+// As in Bazel, variables are file-scoped: a tag call is linked into
+// UseExtension.Tags only within its own file. A tag call on a proxy
+// defined in another file (an error in Bazel) stays an unlinked
+// *ExtensionTagCall; do not attach it to another file's extension.
 type ExpandedFile struct {
 	// Statements is in Bazel evaluation order. Each *Include is kept
 	// as a marker immediately followed by the included statements; a
@@ -89,6 +103,11 @@ type ExpandedFile struct {
 	Errors   []*ParseError
 	Warnings []*ParseError
 }
+
+// HasErrors reports whether any file had parse errors. Check it as well
+// as the returned error: an invalid statement is a parse error, not an
+// expansion failure.
+func (x *ExpandedFile) HasErrors() bool { return len(x.Errors) > 0 }
 
 // IncludeError describes a failed expansion. Pos is the offending
 // include() call, or the forbidden statement.
@@ -152,10 +171,10 @@ func IncludePath(label string) (string, error) {
 	if strings.Contains(name, ":") {
 		return "", errors.New(`label has more than one ":"`)
 	}
-	if pkg != "" && (!cleanSegments(pkg) || strings.IndexFunc(pkg, func(r rune) bool { return r > 0x7e }) >= 0) {
+	if pkg != "" && (!cleanSegments(pkg, true) || strings.IndexFunc(pkg, func(r rune) bool { return r > 0x7e }) >= 0) {
 		return "", fmt.Errorf("invalid package %q", pkg)
 	}
-	if !cleanSegments(name) {
+	if !cleanSegments(name, false) {
 		return "", fmt.Errorf("invalid target name %q", name)
 	}
 	base := name[strings.LastIndex(name, "/")+1:]
@@ -173,10 +192,11 @@ func IncludePath(label string) (string, error) {
 }
 
 // cleanSegments reports whether s is a non-empty "/"-separated path of
-// non-empty segments other than "." and "..".
-func cleanSegments(s string) bool {
+// non-empty segments other than "." and "..". For packages, any
+// all-dots segment ("...") is also rejected, as Bazel's LabelValidator does.
+func cleanSegments(s string, pkg bool) bool {
 	for seg := range strings.SplitSeq(s, "/") {
-		if seg == "" || seg == "." || seg == ".." {
+		if seg == "" || seg == "." || seg == ".." || (pkg && strings.Trim(seg, ".") == "") {
 			return false
 		}
 	}
@@ -184,19 +204,25 @@ func cleanSegments(s string) bool {
 }
 
 // ParseWithIncludes reads MODULE.bazel at the root of fsys, parses it
-// and expands its includes. fsys is typically os.DirFS(workspaceRoot).
+// and expands its includes like [ExpandIncludes], with the same result
+// contract. Pass os.OpenRoot(workspaceRoot) and its FS(): unlike
+// os.DirFS it refuses symlinks that point outside the root. A missing
+// root file is ErrRootModuleNotFound, wrapping fs.ErrNotExist.
 func ParseWithIncludes(ctx context.Context, fsys fs.FS, opts IncludeOptions) (*ExpandedFile, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
 	x := newExpander(ctx, fsys, opts)
+	if err := x.check(); err != nil {
+		return x.out, err
+	}
 	data, err := x.read("MODULE.bazel")
+	if ie := (*IncludeError)(nil); errors.As(err, &ie) && ie.Kind == ErrIncludeNotFound {
+		ie.Kind, ie.Path = ErrRootModuleNotFound, ""
+	}
 	if err != nil {
-		return nil, err
+		return x.out, err
 	}
 	root, err := ParseContent("MODULE.bazel", data)
 	if err != nil {
-		return nil, err
+		return x.out, err
 	}
 	return x.run(root)
 }
@@ -208,8 +234,18 @@ func ParseWithIncludes(ctx context.Context, fsys fs.FS, opts IncludeOptions) (*E
 // and root must be non-nil. Cycles are detected by resolved path, so two
 // spellings of one file's label are the same file. A syntax error in an
 // included file is ErrIncludeUnreadable wrapping the *[ParseError].
+//
+// The result is never nil. On failure it holds everything expanded up
+// to the failure point (Statements, Files, Errors, Warnings) together
+// with the error, so tools can still show something; such a partial
+// result is incomplete. A nil error does not mean the files are valid:
+// check [ExpandedFile.HasErrors] too.
 func ExpandIncludes(ctx context.Context, root *ParseResult, fsys fs.FS, opts IncludeOptions) (*ExpandedFile, error) {
-	return newExpander(ctx, fsys, opts).run(root)
+	x := newExpander(ctx, fsys, opts)
+	if err := x.check(); err != nil {
+		return x.out, err
+	}
+	return x.run(root)
 }
 
 type expander struct {
@@ -231,6 +267,14 @@ func newExpander(ctx context.Context, fsys fs.FS, opts IncludeOptions) *expander
 	return &expander{ctx: ctx, fsys: fsys, opts: opts, out: &ExpandedFile{}, parsed: map[string]*ModuleFile{}}
 }
 
+// check rejects invalid options and a done context.
+func (x *expander) check() error {
+	if x.opts.Role < RootModule || x.opts.Role > RegistryModule {
+		return &IncludeError{Kind: ErrInvalidIncludeOptions, Detail: fmt.Sprintf("unknown ModuleRole %d", x.opts.Role)}
+	}
+	return x.ctx.Err()
+}
+
 func orDefault[T int | int64](v, def T) T {
 	if v <= 0 {
 		return def
@@ -243,15 +287,15 @@ func (x *expander) run(root *ParseResult) (*ExpandedFile, error) {
 	x.out.Errors = append(x.out.Errors, root.Errors...)
 	x.out.Warnings = append(x.out.Warnings, root.Warnings...)
 	if err := x.expand(root.File, nil); err != nil {
-		return nil, err
+		return x.out, err
 	}
-	return x.out, nil
+	return x.out, x.ctx.Err()
 }
 
 func (x *expander) expand(f *ModuleFile, chain []IncludeSite) error {
 	for _, s := range f.Statements {
 		if len(x.out.Statements) >= x.opts.MaxStatements {
-			return &IncludeError{Kind: ErrIncludeLimit, Pos: s.Span().Start, Chain: chain, Detail: fmt.Sprintf("more than %d expanded statements", x.opts.MaxStatements)}
+			return &IncludeError{Kind: ErrIncludeLimit, Pos: s.Span().Start, Chain: chain, Detail: fmt.Sprintf("MaxStatements (%d) reached", x.opts.MaxStatements)}
 		}
 		x.out.Statements = append(x.out.Statements, ExpandedStatement{Statement: s, File: f, Chain: chain})
 		inc, ok := s.(*Include)
@@ -260,9 +304,6 @@ func (x *expander) expand(f *ModuleFile, chain []IncludeSite) error {
 		}
 		fail := func(kind error, path, detail string, err error) error {
 			return &IncludeError{Kind: kind, Pos: inc.Pos.Start, Label: inc.Label, Path: path, Chain: chain, Detail: detail, Err: err}
-		}
-		if inc.malformed {
-			return fail(ErrInvalidIncludeLabel, "", "include() takes one positional string literal and an optional literal dev_dependency", nil)
 		}
 		if inc.DevDependency && (x.opts.IgnoreDevDependency || x.opts.Role != RootModule) {
 			continue
@@ -283,17 +324,20 @@ func (x *expander) expand(f *ModuleFile, chain []IncludeSite) error {
 			return fail(ErrIncludeCycle, path, strings.Join(append(labels, inc.Label), " -> "), nil)
 		}
 		if len(chain) >= x.opts.MaxDepth {
-			return fail(ErrIncludeLimit, path, fmt.Sprintf("include depth exceeds %d", x.opts.MaxDepth), nil)
+			return fail(ErrIncludeLimit, path, fmt.Sprintf("MaxDepth (%d) reached", x.opts.MaxDepth), nil)
 		}
 		if x.files >= x.opts.MaxFiles {
-			return fail(ErrIncludeLimit, path, fmt.Sprintf("more than %d included files", x.opts.MaxFiles), nil)
+			return fail(ErrIncludeLimit, path, fmt.Sprintf("MaxFiles (%d) reached", x.opts.MaxFiles), nil)
 		}
 		if cerr := x.ctx.Err(); cerr != nil {
 			return cerr
 		}
 		x.files++
-		child, err := x.load(path)
+		child, mod, err := x.load(path)
 		if err != nil {
+			if cerr := x.ctx.Err(); cerr != nil && errors.Is(err, cerr) {
+				return err
+			}
 			var ie *IncludeError
 			if errors.As(err, &ie) {
 				ie.Pos, ie.Label, ie.Chain = inc.Pos.Start, inc.Label, chain
@@ -302,10 +346,8 @@ func (x *expander) expand(f *ModuleFile, chain []IncludeSite) error {
 			return fail(ErrIncludeUnreadable, path, "", err)
 		}
 		next := append(slices.Clip(chain), site)
-		for _, cs := range child.Statements {
-			if m, ok := cs.(*ModuleDecl); ok {
-				return &IncludeError{Kind: ErrIncludeForbiddenStatement, Pos: m.Pos.Start, Label: inc.Label, Path: path, Chain: next, Detail: "module() must precede every other call, include() included, so it cannot appear in an included file"}
-			}
+		if mod != nil {
+			return &IncludeError{Kind: ErrIncludeForbiddenStatement, Pos: mod.Pos.Start, Label: inc.Label, Path: path, Chain: next, Detail: "module() must precede every other call, include() included, so it cannot appear in an included file"}
 		}
 		if err := x.expand(child, next); err != nil {
 			return err
@@ -314,32 +356,44 @@ func (x *expander) expand(f *ModuleFile, chain []IncludeSite) error {
 	return nil
 }
 
-// load parses path once; repeated includes reuse the parsed file.
-func (x *expander) load(path string) (*ModuleFile, error) {
+// load parses path once; repeated includes reuse the parsed file. It
+// also returns the file's first module(), found once per parse (a file
+// that has one fails its first splice, so it is never reused).
+func (x *expander) load(path string) (*ModuleFile, *ModuleDecl, error) {
 	if f, ok := x.parsed[path]; ok {
-		return f, nil
+		return f, nil, nil
 	}
 	data, err := x.read(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	res, err := ParseContent(path, data)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	x.parsed[path] = res.File
 	x.out.Files = append(x.out.Files, res.File)
 	x.out.Errors = append(x.out.Errors, res.Errors...)
 	x.out.Warnings = append(x.out.Warnings, res.Warnings...)
-	return res.File, nil
+	if err := x.ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	for _, s := range res.File.Statements {
+		if m, ok := s.(*ModuleDecl); ok {
+			return res.File, m, nil
+		}
+	}
+	return res.File, nil, nil
 }
 
 func (x *expander) read(path string) ([]byte, error) {
 	fail := func(kind error, detail string, err error) error {
 		return &IncludeError{Kind: kind, Pos: Position{Filename: path}, Path: path, Detail: detail, Err: err}
 	}
-	// Stat before Open so a FIFO or device is never opened (Open on one
-	// can block). A file swapped between the two calls is not detected.
+	// Stat before Open so a FIFO or device is not opened (Open on one can
+	// block). That holds only when fsys implements fs.StatFS, as os.DirFS
+	// and os.Root.FS do; otherwise fs.Stat itself opens the file. A file
+	// swapped between the two calls is not detected.
 	st, err := fs.Stat(x.fsys, path)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
@@ -347,20 +401,23 @@ func (x *expander) read(path string) ([]byte, error) {
 	case err != nil:
 		return nil, fail(ErrIncludeUnreadable, "", err)
 	case !st.Mode().IsRegular():
-		return nil, fail(ErrIncludeNotFound, "not a regular file", nil)
+		return nil, fail(ErrIncludeUnreadable, "not a regular file", nil)
 	}
 	f, err := x.fsys.Open(path)
 	if err != nil {
 		return nil, fail(ErrIncludeUnreadable, "", err)
 	}
 	defer func() { _ = f.Close() }()
-	limit := min(x.opts.MaxFileBytes, x.opts.MaxTotalBytes-x.bytes)
+	limit, which := x.opts.MaxFileBytes, fmt.Sprintf("MaxFileBytes (%d)", x.opts.MaxFileBytes)
+	if left := x.opts.MaxTotalBytes - x.bytes; left < limit {
+		limit, which = left, fmt.Sprintf("MaxTotalBytes (%d)", x.opts.MaxTotalBytes)
+	}
 	data, err := io.ReadAll(io.LimitReader(f, limit+1))
 	if err != nil {
 		return nil, fail(ErrIncludeUnreadable, "", err)
 	}
 	if int64(len(data)) > limit {
-		return nil, fail(ErrIncludeLimit, fmt.Sprintf("file exceeds %d bytes or total exceeds %d bytes", x.opts.MaxFileBytes, x.opts.MaxTotalBytes), nil)
+		return nil, fail(ErrIncludeLimit, which+" exceeded", nil)
 	}
 	x.bytes += int64(len(data))
 	return data, nil

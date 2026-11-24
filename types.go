@@ -281,10 +281,6 @@ type Include struct {
 	Label string
 	// DevDependency mirrors include(..., dev_dependency = True) (Bazel 9.3+).
 	DevDependency bool
-	// malformed is set when the call is not one positional string
-	// literal plus an optional literal dev_dependency kwarg, the only
-	// shape Bazel accepts. ExpandIncludes rejects such calls.
-	malformed bool
 }
 
 func (i *Include) Span() Span   { return i.Pos }
